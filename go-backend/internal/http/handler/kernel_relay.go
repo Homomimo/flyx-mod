@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -711,16 +711,24 @@ func constantTimeEqual(a, b string) bool {
 	return v == 0
 }
 
-// installedKernelVersion is a concrete release such as "25.10.15".
-var installedKernelVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+(\.[0-9]+)?$`)
-
-// kernelSupportsPostQuantumReality: Xray negotiates X25519MLKEM768 in REALITY
-// from 25.5.16 on. Mihomo needs server support for it, so an unknown installed
-// version does not count.
+// Only advertise hybrid REALITY to Mihomo for a confirmed Xray release
+// meeting the panel's compatibility floor. Do not infer support from a tag,
+// a version banner, or a partially specified version.
 func kernelSupportsPostQuantumReality(k *model.NodeKernel) bool {
 	if k == nil || k.KernelType != kernel.TypeXray {
 		return false
 	}
-	version := strings.TrimSpace(k.InstalledVersion)
-	return installedKernelVersion.MatchString(version) && !versionBelow(version, 25, 5, 16)
+	var release [3]uint64
+	parts := strings.Split(strings.TrimSpace(k.InstalledVersion), ".")
+	if len(parts) != len(release) {
+		return false
+	}
+	for i, part := range parts {
+		n, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return false
+		}
+		release[i] = n
+	}
+	return slices.Compare(release[:], []uint64{26, 7, 11}) >= 0
 }
