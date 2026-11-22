@@ -372,8 +372,8 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, nodeID int64
 					s.broadcastTyped(nodeID, "metric", string(envelope.Data))
 				}
 				continue
-			case "SubscriptionCountersResponse":
-				// Already delivered to the rate sampler; do not send raw per-user counters to node monitors.
+			case "SubscriptionCountersResponse", "SubscriptionSNIResponse":
+				// Private subscription data is only delivered to the pending request.
 				continue
 			case "UpgradeProgress":
 				s.broadcastTyped(nodeID, "upgrade_progress", msg)

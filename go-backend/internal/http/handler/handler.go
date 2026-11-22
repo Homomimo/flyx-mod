@@ -303,6 +303,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/subscription/order", h.subscriptionOrder)
 	mux.HandleFunc("/api/v1/subscription/reset", h.subscriptionReset)
 	mux.HandleFunc("/api/v1/subscription/reset-traffic", h.subscriptionResetTraffic)
+	mux.HandleFunc("/api/v1/subscription/sni", h.subscriptionSNI)
 	mux.HandleFunc("/api/v1/subscription/traffic", h.subscriptionTraffic)
 	mux.HandleFunc("/api/v1/subscription/source/list", h.remoteSourceList)
 	mux.HandleFunc("/api/v1/subscription/source/save", h.remoteSourceSave)

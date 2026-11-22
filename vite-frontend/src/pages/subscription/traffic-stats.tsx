@@ -13,6 +13,8 @@ import {
   YAxis,
 } from "recharts";
 
+import { AccessSNI } from "./access-sni";
+
 import { getSubscriptionTraffic } from "@/api";
 import { useVisiblePolling } from "@/hooks/use-visible-polling";
 import { Segmented } from "@/pages/subscription/controls";
@@ -92,6 +94,11 @@ export function SubTrafficStats({ id }: { id: number }) {
     null,
   );
   const [error, setError] = useState("");
+  const [selection, setSelection] = useState<{
+    id: number;
+    range: SubTrafficRange;
+    time: number;
+  } | null>(null);
   const [all, setAll] = useState(false);
   const loadRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -143,6 +150,10 @@ export function SubTrafficStats({ id }: { id: number }) {
   });
   const empty = shown !== null && shown.up + shown.down === 0;
   const rows = [...points].reverse();
+  const selected =
+    (selection?.id === id && selection.range === range
+      ? points.find((p) => p.time === selection.time)
+      : null) ?? rows[0];
   const maxTotal = Math.max(1, ...points.map((p) => p.up + p.down));
   // The bucket the used traffic above started counting in, if in range.
   const sinceAt =
@@ -205,6 +216,16 @@ export function SubTrafficStats({ id }: { id: number }) {
               <ComposedChart
                 data={points}
                 margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                onClick={(e: {
+                  activeTooltipIndex?: string | number | null;
+                }) => {
+                  const p =
+                    e.activeTooltipIndex != null
+                      ? points[Number(e.activeTooltipIndex)]
+                      : undefined;
+
+                  if (p) setSelection({ id, range, time: p.time });
+                }}
               >
                 <XAxis
                   axisLine={false}
@@ -301,6 +322,36 @@ export function SubTrafficStats({ id }: { id: number }) {
             )}
           </div>
 
+          {selected && (
+            <section className="space-y-2 rounded-xl border border-divider p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold">访问 SNI</h4>
+                <label className="text-xs">
+                  查看时段{" "}
+                  <select
+                    aria-label="访问 SNI 时段"
+                    className="rounded border border-divider bg-content1 p-1"
+                    value={selected.time}
+                    onChange={(e) =>
+                      setSelection({ id, range, time: Number(e.target.value) })
+                    }
+                  >
+                    {rows.map((p) => (
+                      <option key={p.time} value={p.time}>
+                        {p.long}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <AccessSNI
+                key={id + ":" + range + ":" + selected.time}
+                id={id}
+                range={range}
+                start={selected.time}
+              />
+            </section>
+          )}
           <div className="overflow-hidden rounded-xl border border-divider">
             <div className="grid grid-cols-[4.75rem_minmax(0,1fr)_4.5rem] gap-2 bg-default-100/60 px-3 py-1.5 text-xs text-default-500">
               <span>时间</span>

@@ -1041,6 +1041,23 @@ const trafficQuery = (id: number, range: SubTrafficRange) => ({
   tzOffset: -new Date().getTimezoneOffset(),
 });
 
+export interface SNIView {
+  items: Array<{ domain: string; hits: number }>;
+  ready: number;
+  stopped: number;
+  disabled: number;
+  unavailable: number;
+  limited: boolean;
+}
+export const getSubscriptionSNI = (
+  id: number,
+  range: SubTrafficRange,
+  start: number,
+) =>
+  Network.post<SNIView>("/subscription/sni", {
+    ...trafficQuery(id, range),
+    start,
+  });
 export const getSubscriptionTraffic = (id: number, range: SubTrafficRange) =>
   Network.post<SubTraffic>("/subscription/traffic", trafficQuery(id, range));
 /** What a source's nodes are for in a chain: plain nodes, relays (前置) or landing nodes. */

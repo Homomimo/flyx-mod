@@ -32,6 +32,12 @@ func handleKernelCommand(cmdType string, data interface{}) (interface{}, error) 
 			return nil, fmt.Errorf("解析内核操作失败: %v", err)
 		}
 		return m.Control(req.Type, req.Action)
+	case "SubscriptionSNI":
+		var req kernel.SNIQuery
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		return kernel.QuerySNI(req)
 	case "SubscriptionCounters":
 		return m.SubscriptionCounters()
 	case "KernelStatus":

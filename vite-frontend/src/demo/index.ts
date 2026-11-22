@@ -146,6 +146,62 @@ async function answer(config: InternalAxiosRequestConfig) {
   const write = isWrite(last);
   const delta = Math.max(0, Date.now() - fixtures.recordedAt);
 
+  if (bare === "subscription/traffic" || bare === "subscription/sni") {
+    const { id, range, start } = JSON.parse(key || "{}");
+    const n = range === "hour" ? 24 : range === "day" ? 30 : 12;
+    const current = new Date();
+
+    current.setMinutes(0, 0, 0);
+    if (range !== "hour") current.setHours(0);
+    if (range === "month") current.setDate(1);
+    const points = Array.from({ length: n }, (_, i) => {
+      const t = new Date(current),
+        back = n - 1 - i;
+
+      if (range === "hour") t.setHours(t.getHours() - back);
+      else if (range === "day") t.setDate(t.getDate() - back);
+      else t.setMonth(t.getMonth() - back);
+
+      return {
+        time: +t,
+        up: (((i * 7) % 13) + id) * 65536,
+        down: (((i * 9) % 17) + id) * 262144,
+      };
+    });
+    const i = points.findIndex((p) => p.time === start);
+    const data =
+      bare === "subscription/traffic"
+        ? {
+            range,
+            points,
+            up: points.reduce((a, p) => a + p.up, 0),
+            down: points.reduce((a, p) => a + p.down, 0),
+            since: points[0].time,
+          }
+        : {
+            ready: 1,
+            stopped: 0,
+            disabled: 0,
+            unavailable: 0,
+            limited: false,
+            items:
+              i < 0 || i % 7 === 0
+                ? []
+                : [
+                    {
+                      domain:
+                        ["docs", "files", "media"][i % 3] +
+                        ".sub" +
+                        id +
+                        ".test",
+                      hits: i + 4,
+                    },
+                    { domain: "cdn.sub" + id + ".test", hits: 2 },
+                  ],
+          };
+
+    return { code: 0, msg: "演示数据", data, ts: Date.now() };
+  }
   if (PROBES[bare]) {
     const [list, field] = PROBES[bare];
     const ids: number[] = JSON.parse(String(config.data || "{}")).ids ?? [];
