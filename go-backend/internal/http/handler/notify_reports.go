@@ -70,50 +70,13 @@ func expiryText(expMs int64, now time.Time) (string, bool) {
 	return fmt.Sprintf("%s（剩余约 %d 天）", exp.Format("2006-01-02 15:04"), int(left.Hours()/24)+1), false
 }
 
-// checkUserReminders reports forward users near their traffic limit or
-// expiry, and shared subscription users near expiry.
+// checkUserReminders reports shared subscriptions near their traffic limit
+// or expiry.
 func (h *Handler) checkUserReminders(now time.Time) {
 	if h.notifier == nil {
 		return
 	}
 	window := time.Duration(notifyUserExpiryDays) * 24 * time.Hour
-	if users, err := h.repo.ListUsersForNotify(); err == nil {
-		for _, u := range users {
-			if u.RoleID == 0 || u.Status != 1 {
-				continue
-			}
-			limit := flowLimitBytes(u.Flow, u.FlowMiB)
-			used := u.InFlow + u.OutFlow
-			flowKey := fmt.Sprintf("flow:%d:", u.ID)
-			switch {
-			case limit <= 0:
-			case used >= limit:
-				if h.notifier.alertOnce(flowKey + "full") {
-					h.notifier.alertOnce(flowKey + "warn")
-					h.notify(notifyEventUserQuota, "用户流量已用完",
-						fmt.Sprintf("用户：%s\n已用：%s / %s", u.User, formatBytes(used), formatBytes(limit)))
-				}
-			case float64(used) >= float64(limit)*notifyFlowWarnRatio:
-				if h.notifier.alertOnce(flowKey + "warn") {
-					h.notify(notifyEventUserQuota, "用户流量即将用完",
-						fmt.Sprintf("用户：%s\n已用：%s / %s（%.0f%%）", u.User, formatBytes(used), formatBytes(limit),
-							float64(used)*100/float64(limit)))
-				}
-			default:
-				h.notifier.clearAlerts(flowKey)
-			}
-			if u.ExpTime > 0 && time.UnixMilli(u.ExpTime).Sub(now) <= window {
-				if h.notifier.alertOnce(fmt.Sprintf("exp:%d:%d", u.ID, u.ExpTime)) {
-					text, expired := expiryText(u.ExpTime, now)
-					title := "用户即将到期"
-					if expired {
-						title = "用户已到期"
-					}
-					h.notify(notifyEventUserQuota, title, fmt.Sprintf("用户：%s\n到期：%s", u.User, text))
-				}
-			}
-		}
-	}
 	if subs, err := h.repo.ListSubscriptions(); err == nil {
 		for _, s := range subs {
 			if isShare(&s) && s.Enabled == 1 {

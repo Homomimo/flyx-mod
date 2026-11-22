@@ -92,40 +92,6 @@ class DashboardPage(BasePage):
         self.page.wait_for_load_state("networkidle")
 
 
-class UserPage(BasePage):
-    """User management page object."""
-
-    def __init__(self, page: Page, base_url: str):
-        super().__init__(page, base_url)
-        self.create_button: Locator = page.locator('button:has-text("创建"), button:has-text("新增")')
-        self.user_table: Locator = page.locator("table")
-
-    def goto(self):
-        """Navigate to user management page."""
-        self.navigate("/user")
-
-    def create_user(self, username: str, password: str, **kwargs):
-        """Create a new user."""
-        self.create_button.click()
-        page = self.page
-
-        page.fill('input[placeholder*="用户名"], input[name="username"]', username)
-        page.fill('input[placeholder*="密码"], input[name="password"]', password)
-
-        if kwargs.get("name"):
-            page.fill('input[placeholder*="名称"], input[name="name"]', kwargs["name"])
-
-        page.click('button:has-text("确定"), button:has-text("提交")')
-        page.wait_for_load_state("networkidle")
-
-    def delete_user(self, username: str):
-        """Delete a user by username."""
-        row = self.page.locator(f"tr:has-text('{username}')")
-        row.locator('button:has-text("删除")').click()
-        self.page.click('button:has-text("确认")')
-        self.page.wait_for_load_state("networkidle")
-
-
 class NodePage(BasePage):
     """Node management page object."""
 

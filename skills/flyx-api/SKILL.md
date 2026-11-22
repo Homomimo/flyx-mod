@@ -106,24 +106,19 @@ User request → Check env vars → Auto-login if needed → Call API → Return
 
 | User Intent | API Endpoint | Reference |
 |-------------|--------------|-----------|
-| "登录" / "查看我的信息" | `/api/v1/user/package` | [auth](references/auth.md) |
-| "创建用户" / "添加用户" | `/api/v1/user/create` | [users](references/users.md) |
-| "查看用户列表" / "所有用户" | `/api/v1/user/list` | [users](references/users.md) |
-| "重置流量" | `/api/v1/user/reset` | [users](references/users.md) |
+| "登录" | `/api/v1/user/login` | [auth](references/auth.md) |
 | "添加节点" / "新建节点" | `/api/v1/node/create` | [nodes](references/nodes.md) |
 | "查看节点" / "节点状态" | `/api/v1/node/list` | [nodes](references/nodes.md) |
 | "安装命令" / "部署节点" | `/api/v1/node/install` | [nodes](references/nodes.md) |
 | "升级节点" | `/api/v1/node/upgrade` | [nodes](references/nodes.md) |
 | "创建隧道" / "新建隧道" | `/api/v1/tunnel/create` | [tunnels](references/tunnels.md) |
-| "分配隧道给用户" | `/api/v1/tunnel/user/assign` | [tunnels](references/tunnels.md) |
 | "创建转发" / "新建转发" / "添加转发" | `/api/v1/forward/create` | [forwards](references/forwards.md) |
 | "暂停转发" | `/api/v1/forward/pause` | [forwards](references/forwards.md) |
 | "恢复转发" | `/api/v1/forward/resume` | [forwards](references/forwards.md) |
 | "删除转发" | `/api/v1/forward/delete` | [forwards](references/forwards.md) |
 | "查看我的转发" / "转发列表" | `/api/v1/forward/list` | [forwards](references/forwards.md) |
-| "查看流量" / "流量统计" | `/api/v1/forward/list` or `/api/v1/user/package` | [forwards](references/forwards.md) |
+| "查看流量" / "流量统计" | `/api/v1/forward/list` | [forwards](references/forwards.md) |
 | "诊断转发" / "测试连通性" | `/api/v1/forward/diagnose` | [forwards](references/forwards.md) |
-| "创建限速规则" | `/api/v1/speed-limit/create` | [speed-limits](references/speed-limits.md) |
 | "联邦共享" / "节点共享" | `/api/v1/federation/share/create` | [federation](references/federation.md) |
 | "导出备份" | `/api/v1/backup/export` | [backup](references/backup.md) |
 | "导入备份" | `/api/v1/backup/import` | [backup](references/backup.md) |
@@ -236,24 +231,16 @@ console.log(await res.json());
 
 ## Permission Model
 
-| role_id | Type | Access |
-|---------|------|--------|
-| 0 | Admin | All endpoints |
-| 1 | Regular | Forward CRUD, own profile, assigned tunnels only |
-
-Non-admin users can only see/modify their own resources.
+FLYX is single-user: the panel has one account, the admin (`role_id` 0), and every endpoint is the admin's. Tokens of any other account are refused with code 401.
 
 ## Module Reference
 
 | Module | Endpoints | Reference |
 |--------|-----------|-----------|
 | Auth | login, captcha | [auth.md](references/auth.md) |
-| Users | CRUD, reset, password | [users.md](references/users.md) |
 | Nodes | CRUD, install, upgrade, status | [nodes.md](references/nodes.md) |
-| Tunnels | CRUD, user assignment | [tunnels.md](references/tunnels.md) |
+| Tunnels | CRUD, diagnose, redeploy | [tunnels.md](references/tunnels.md) |
 | Forwards | CRUD, pause/resume, diagnose | [forwards.md](references/forwards.md) |
-| Groups | User/tunnel groups, permissions | [groups.md](references/groups.md) |
-| Speed Limits | CRUD | [speed-limits.md](references/speed-limits.md) |
 | Federation | Share, remote nodes | [federation.md](references/federation.md) |
 | Backup | Export/import | [backup.md](references/backup.md) |
 | Config | System settings | [config.md](references/config.md) |
@@ -266,21 +253,13 @@ Non-admin users can only see/modify their own resources.
 1. ⚠️ **NO "Bearer" prefix** - `Authorization: <token>`, NOT `Authorization: Bearer <token>`
 2. **All endpoints use POST** - Including list/get operations
 3. **code === 0 means success** - Any other value is an error
-4. **Traffic units**: User.flow is GB, in_flow/out_flow are bytes
+4. **Traffic units**: in_flow/out_flow are bytes, counted as they are (no billing ratio)
 5. **Timestamps**: All timestamps are milliseconds since epoch
 6. **Token is session-scoped**: Cache in memory only, not on disk
 
 ## Common Workflows
 
-### Workflow 1: New User Onboarding (Admin)
-```
-1. POST /api/v1/user/create → Create user with traffic quota
-2. POST /api/v1/tunnel/user/assign → Assign tunnels to user
-3. Tell user their username/password
-4. User logs in and creates forwards
-```
-
-### Workflow 2: Add New Node (Admin)
+### Workflow 1: Add New Node
 ```
 1. POST /api/v1/node/create → Register node in panel
 2. POST /api/v1/node/install → Get install command
@@ -288,14 +267,14 @@ Non-admin users can only see/modify their own resources.
 4. POST /api/v1/node/check-status → Verify node is online
 ```
 
-### Workflow 3: Create Forward (Any User)
+### Workflow 2: Create Forward
 ```
 1. POST /api/v1/tunnel/user/tunnel → List available tunnels
 2. POST /api/v1/forward/create → Create forward on chosen tunnel
 3. POST /api/v1/forward/diagnose → Verify connectivity
 ```
 
-### Workflow 4: Node Maintenance (Admin)
+### Workflow 3: Node Maintenance
 ```
 1. POST /api/v1/node/list → Check node statuses
 2. POST /api/v1/node/releases → Check available versions

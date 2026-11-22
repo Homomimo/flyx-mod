@@ -34,7 +34,7 @@ Authenticate and obtain JWT token.
 |-------|------|-------------|
 | token | string | JWT token for subsequent requests |
 | name | string | User's display name |
-| role_id | number | 0 = admin, 1 = regular user |
+| role_id | number | Always 0: the panel has only the admin |
 | requirePasswordChange | boolean | Whether password change is required |
 
 ## JWT Token Details
@@ -117,35 +117,3 @@ Change current user's password.
 ```json
 {"code": 0, "msg": "success"}
 ```
-
-## POST /api/v1/user/package
-
-Get current user's package info (tunnels, forwards, traffic stats).
-
-**Request:** `{}`
-
-**Response:**
-```json
-{
-  "code": 0,
-  "data": {
-    "flow": 100,
-    "inFlow": 1073741824,
-    "outFlow": 2147483648,
-    "tunnels": 5,
-    "forwards": 10,
-    "expTime": 1735689600000
-  }
-}
-```
-
-**Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| flow | number | Total traffic quota in GB |
-| inFlow | number | Used upload in bytes |
-| outFlow | number | Used download in bytes |
-| tunnels | number | Number of assigned tunnels |
-| forwards | number | Number of forwards created |
-| expTime | number | Account expiry timestamp (ms) |

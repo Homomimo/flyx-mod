@@ -161,14 +161,6 @@ func (h *Handler) buildNftablesNodePlan(nodeID int64) (runtimenft.NodePlan, *mod
 	if err != nil {
 		return runtimenft.NodePlan{}, nil, err
 	}
-	userIDs := make([]int64, 0, len(forwards))
-	for _, f := range forwards {
-		userIDs = append(userIDs, f.UserID)
-	}
-	quotas, err := h.repo.ListUserQuotaViewsByUserIDs(userIDs, time.Now())
-	if err != nil {
-		return runtimenft.NodePlan{}, nil, err
-	}
 	plan := runtimenft.NodePlan{NodeID: nodeID, Rules: make([]runtimenft.Rule, 0, len(forwards))}
 	for i := range forwards {
 		forward := &forwards[i]
@@ -205,7 +197,7 @@ func (h *Handler) buildNftablesNodePlan(nodeID int64) (runtimenft.NodePlan, *mod
 				TargetHost: target.Host,
 				TargetPort: target.Port,
 				Protocols:  []string{"tcp", "udp"},
-				Paused:     forward.Status != 1 || (quotas[forward.UserID] != nil && (quotas[forward.UserID].DisabledByQuota == 1 || isUserQuotaExceeded(quotas[forward.UserID]))),
+				Paused:     forward.Status != 1,
 			})
 		}
 	}

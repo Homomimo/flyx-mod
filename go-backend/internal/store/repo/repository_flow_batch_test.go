@@ -86,7 +86,7 @@ func TestGetFlowUploadForwardMetasAndApplyFlowUploadDeltasBatch(t *testing.T) {
 	}
 }
 
-func TestApplyNftTrafficAccountingAppliesFlowQuotaAndStates(t *testing.T) {
+func TestApplyNftTrafficAccountingAppliesFlowAndStates(t *testing.T) {
 	r, err := Open(filepath.Join(t.TempDir(), "nft-accounting.db"))
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -97,9 +97,8 @@ func TestApplyNftTrafficAccountingAppliesFlowQuotaAndStates(t *testing.T) {
 	nowMs := now.UnixMilli()
 	seedFlowBatchRows(t, r, nowMs)
 
-	quotaViews, err := r.ApplyNftTrafficAccounting(
-		[]FlowUploadCounterDelta{{ForwardID: 20, UserID: 2, UserTunnelID: 10, InFlow: 480, OutFlow: 660}},
-		map[int64]int64{2: 1140},
+	err = r.ApplyNftTrafficAccounting(
+		[]FlowUploadCounterDelta{{ForwardID: 20, UserID: 2, InFlow: 480, OutFlow: 660}},
 		[]NftCounterStateInput{{
 			NodeID:        11,
 			ForwardID:     20,
@@ -121,12 +120,6 @@ func TestApplyNftTrafficAccountingAppliesFlowQuotaAndStates(t *testing.T) {
 	if got := mustFlowBatchCount(t, r, `SELECT out_flow FROM user WHERE id = 2`); got != 660 {
 		t.Fatalf("expected user out_flow=660, got %d", got)
 	}
-	if got := mustFlowBatchCount(t, r, `SELECT in_flow FROM user_tunnel WHERE id = 10`); got != 480 {
-		t.Fatalf("expected user_tunnel in_flow=480, got %d", got)
-	}
-	if quotaViews[2] == nil || quotaViews[2].DailyUsedBytes != 1140 || quotaViews[2].MonthlyUsedBytes != 1140 {
-		t.Fatalf("unexpected quota view: %#v", quotaViews[2])
-	}
 	states, err := r.GetNftCounterStatesByNode(11)
 	if err != nil {
 		t.Fatalf("GetNftCounterStatesByNode: %v", err)
@@ -136,7 +129,7 @@ func TestApplyNftTrafficAccountingAppliesFlowQuotaAndStates(t *testing.T) {
 	}
 }
 
-func TestApplyNftTrafficAccountingRollsBackFlowAndQuotaWhenStateWriteFails(t *testing.T) {
+func TestApplyNftTrafficAccountingRollsBackFlowWhenStateWriteFails(t *testing.T) {
 	r, err := Open(filepath.Join(t.TempDir(), "nft-accounting-rollback.db"))
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -150,9 +143,8 @@ func TestApplyNftTrafficAccountingRollsBackFlowAndQuotaWhenStateWriteFails(t *te
 		t.Fatalf("drop nft_counter_state: %v", err)
 	}
 
-	_, err = r.ApplyNftTrafficAccounting(
-		[]FlowUploadCounterDelta{{ForwardID: 20, UserID: 2, UserTunnelID: 10, InFlow: 480, OutFlow: 660}},
-		map[int64]int64{2: 1140},
+	err = r.ApplyNftTrafficAccounting(
+		[]FlowUploadCounterDelta{{ForwardID: 20, UserID: 2, InFlow: 480, OutFlow: 660}},
 		[]NftCounterStateInput{{
 			NodeID:        11,
 			ForwardID:     20,
@@ -173,9 +165,6 @@ func TestApplyNftTrafficAccountingRollsBackFlowAndQuotaWhenStateWriteFails(t *te
 	}
 	if got := mustFlowBatchCount(t, r, `SELECT out_flow FROM user WHERE id = 2`); got != 0 {
 		t.Fatalf("expected user flow rollback, got %d", got)
-	}
-	if got := mustFlowBatchCount(t, r, `SELECT COALESCE((SELECT daily_used_bytes FROM user_quota WHERE user_id = 2), 0)`); got != 0 {
-		t.Fatalf("expected quota rollback, got %d", got)
 	}
 }
 
@@ -228,27 +217,6 @@ func TestGetTunnelRecordIncludesProbeTarget(t *testing.T) {
 	}
 	if record.ProbeTargetHost != "speed.example.com" || record.ProbeTargetPort != 8443 {
 		t.Fatalf("unexpected probe target on record: %#v", record)
-	}
-}
-
-func TestAddUserQuotaUsageBatchReturnsNormalizedViews(t *testing.T) {
-	r, err := Open(filepath.Join(t.TempDir(), "quota-batch.db"))
-	if err != nil {
-		t.Fatalf("open repo: %v", err)
-	}
-	defer r.Close()
-
-	now := time.Now()
-	nowMs := now.UnixMilli()
-	if err := r.DB().Exec(`INSERT INTO user(id, user, pwd, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status) VALUES(2, 'u2', 'pwd', 1, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)`, nowMs, nowMs).Error; err != nil {
-		t.Fatalf("insert user: %v", err)
-	}
-	views, err := r.AddUserQuotaUsageBatch(map[int64]int64{2: 1140}, now)
-	if err != nil {
-		t.Fatalf("batch quota update: %v", err)
-	}
-	if views[2] == nil || views[2].DailyUsedBytes != 1140 || views[2].MonthlyUsedBytes != 1140 {
-		t.Fatalf("unexpected quota view: %#v", views[2])
 	}
 }
 

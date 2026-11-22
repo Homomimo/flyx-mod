@@ -1,179 +1,64 @@
-import {
-  ArrowDownToLine,
-  Globe,
-  LayoutGrid,
-  LineChart,
-  Link2,
-  Menu,
-  Rss,
-  Server,
-} from "lucide-react";
-import React, { useState, useEffect } from "react";
+import { Globe, LayoutGrid, Link2, Menu, Rss, Server } from "lucide-react";
+import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import toast from "react-hot-toast";
 
 import { BrandLogo } from "@/components/brand-logo";
 import { siteConfig } from "@/config/site";
-import { getMonitorAccess } from "@/api";
-import { getAdminFlag } from "@/utils/session";
-import { useHasMySubscriptions } from "@/hooks/use-has-my-subscriptions";
+import { useRouteTransition } from "@/hooks/useRouteTransition";
 import { useScrollTopOnPathChange } from "@/hooks/useScrollTopOnPathChange";
 
 interface TabItem {
   path: string;
   label: string;
   icon: React.ReactNode;
-  adminOnly?: boolean;
-  // Admins reach it from the profile page instead, to keep the bar short.
-  userOnly?: boolean;
-  adminLabel?: string;
 }
+
+// The bar follows the landing → relay → subscription flow; settings and
+// sharing are under 更多.
+const tabItems: TabItem[] = [
+  {
+    path: "/dashboard",
+    label: "概览",
+    icon: <LayoutGrid className="h-5 w-5" strokeWidth={1.75} />,
+  },
+  {
+    path: "/node",
+    label: "服务器",
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+  },
+  {
+    path: "/inbound",
+    label: "节点",
+    icon: <Globe className="h-5 w-5" strokeWidth={1.75} />,
+  },
+  {
+    path: "/relay",
+    label: "中转",
+    icon: <Link2 className="h-5 w-5" strokeWidth={1.75} />,
+  },
+  {
+    path: "/subscription",
+    label: "订阅",
+    icon: <Rss className="h-5 w-5" strokeWidth={1.75} />,
+  },
+  {
+    path: "/profile",
+    label: "更多",
+    icon: <Menu className="h-5 w-5" strokeWidth={1.75} />,
+  },
+];
 
 export default function H5Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isAdmin, setIsAdmin] = useState(() => getAdminFlag());
-  const hasMySubs = useHasMySubscriptions(isAdmin);
-  const [monitorAllowed, setMonitorAllowed] = useState<boolean | null>(null);
-  const [monitorAccessReason, setMonitorAccessReason] = useState<string | null>(
-    null,
-  );
 
   useScrollTopOnPathChange();
-
-  // Tabbar配置
-  // Admins work along the landing → relay → subscription flow; the forward
-  // pages for regular users stay as they were.
-  const tabItems: TabItem[] = [
-    {
-      path: "/dashboard",
-      label: "首页",
-      adminLabel: "概览",
-      icon: <LayoutGrid className="h-5 w-5" strokeWidth={1.75} />,
-    },
-    {
-      path: "/forward",
-      label: "规则",
-      icon: <ArrowDownToLine className="h-5 w-5" strokeWidth={1.75} />,
-      userOnly: true,
-    },
-    {
-      path: "/my-subscriptions",
-      label: "订阅",
-      icon: <Rss className="h-5 w-5" strokeWidth={1.75} />,
-      // Shown once the user has subscriptions assigned.
-      userOnly: true,
-    },
-    {
-      path: "/node",
-      label: "服务器",
-      icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
-      adminOnly: true,
-    },
-    {
-      path: "/inbound",
-      label: "节点",
-      icon: <Globe className="h-5 w-5" strokeWidth={1.75} />,
-      adminOnly: true,
-    },
-    {
-      path: "/relay",
-      label: "中转",
-      icon: <Link2 className="h-5 w-5" strokeWidth={1.75} />,
-      adminOnly: true,
-    },
-    {
-      path: "/subscription",
-      label: "订阅",
-      icon: <Rss className="h-5 w-5" strokeWidth={1.75} />,
-      adminOnly: true,
-    },
-    {
-      path: "/monitor",
-      label: "监控",
-      icon: <LineChart className="h-5 w-5" strokeWidth={1.75} />,
-      userOnly: true,
-    },
-    {
-      path: "/profile",
-      label: "我的",
-      adminLabel: "更多",
-      icon: <Menu className="h-5 w-5" strokeWidth={1.75} />,
-    },
-  ];
-
-  useEffect(() => {
-    const adminFlag = getAdminFlag();
-
-    setIsAdmin(adminFlag);
-    if (adminFlag) {
-      setMonitorAllowed(true);
-      setMonitorAccessReason(null);
-
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const res = await getMonitorAccess();
-
-        if (cancelled) return;
-        if (res.code === 0 && res.data) {
-          setMonitorAllowed(Boolean(res.data.allowed));
-          setMonitorAccessReason(
-            res.data.allowed ? null : res.data.reason || null,
-          );
-
-          return;
-        }
-        setMonitorAllowed(true);
-        setMonitorAccessReason(null);
-      } catch {
-        if (cancelled) return;
-        setMonitorAllowed(true);
-        setMonitorAccessReason(null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Tab点击处理
-  const handleTabClick = (path: string) => {
-    if (path === "/monitor" && monitorAllowed !== true) {
-      if (monitorAllowed == null) {
-        toast("正在检查监控权限，请稍后重试");
-
-        return;
-      }
-
-      const hint =
-        monitorAccessReason === "need_admin_grant"
-          ? "暂无监控权限，请联系管理员授权"
-          : "暂无监控权限";
-
-      toast.error(hint);
-
-      return;
-    }
-    navigate(path);
-  };
-
-  // 过滤tab项（根据权限）
-  const filteredTabItems = tabItems.filter(
-    (item) =>
-      (isAdmin ? !item.userOnly : !item.adminOnly) &&
-      (item.path !== "/my-subscriptions" || hasMySubs),
-  );
+  const transition = useRouteTransition();
 
   return (
-    <div className="flex flex-col min-h-screen bg-mesh-gradient">
-      {/* 顶部导航栏 */}
-      <header className="bg-background border-b border-divider h-14 safe-top flex-shrink-0 flex items-center justify-between px-4 relative z-10">
+    <div className="h5-shell flex flex-col min-h-screen bg-mesh-gradient">
+      {/* 顶部导航栏：与灰色页面同色，像 iOS 的大标题页 */}
+      <header className="h-14 safe-top flex-shrink-0 flex items-center justify-between px-4 relative z-10">
         <div className="flex items-center gap-2">
           <BrandLogo size={20} />
           <h1 className="text-sm font-bold text-foreground">
@@ -185,53 +70,39 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* 主内容区域 */}
-      <main className="flex-1">{children}</main>
+      {/* overflow-x: clip keeps a page sliding in from the side from adding
+          a horizontal scrollbar, without breaking sticky bars inside. */}
+      <main className="flex-1 overflow-x-clip">
+        <div key={location.pathname} className={transition}>
+          {children}
+        </div>
+      </main>
 
-      {/* 用于给固定 Tabbar 腾出空间的占位元素 */}
-      <div aria-hidden className="h-[calc(4rem+var(--safe-area-bottom))]" />
+      {/* 给悬浮 Tabbar 腾出空间 */}
+      <div aria-hidden className="h-[calc(5rem+var(--safe-area-bottom))]" />
 
-      {/* 底部Tabbar */}
-      <nav className="bg-background border-t border-divider h-[calc(4rem+var(--safe-area-bottom))] flex-shrink-0 flex items-center justify-around px-2 fixed bottom-0 left-0 right-0 z-30">
-        {filteredTabItems.map((item) => {
+      {/* 底部悬浮 Tabbar：圆角胶囊，选中项带底色。纯色不加模糊，滚动更流畅 */}
+      <nav className="fixed inset-x-3 bottom-[calc(0.5rem+var(--safe-area-bottom))] z-30 flex h-[3.75rem] items-center gap-0.5 rounded-[1.75rem] border border-divider bg-content1 p-1 shadow-[0_6px_24px_rgba(0,0,0,0.08)] dark:bg-default-50 dark:shadow-none">
+        {tabItems.map((item) => {
           const isActive =
             location.pathname === item.path ||
             (item.path === "/relay" &&
-              isAdmin &&
               ["/tunnel", "/forward"].includes(location.pathname)) ||
             (item.path === "/profile" &&
-              isAdmin &&
-              [
-                "/monitor",
-                "/user",
-                "/group",
-                "/limit",
-                "/config",
-                "/panel-sharing",
-              ].includes(location.pathname));
-          const isMonitor = item.path === "/monitor";
-          const isMonitorBlocked = isMonitor && monitorAllowed !== true;
+              ["/config", "/panel-sharing"].includes(location.pathname));
 
           return (
             <button
               key={item.path}
-              className={`
-                flex flex-col items-center justify-center flex-1 h-full pb-[var(--safe-area-bottom)]
-                transition-colors duration-200 min-h-[44px]
-                ${isMonitorBlocked ? "opacity-60" : ""}
-                ${
-                  isActive
-                    ? "text-foreground"
-                    : isMonitorBlocked
-                      ? "text-gray-500 dark:text-gray-400"
-                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                }
-              `}
-              onClick={() => handleTabClick(item.path)}
+              className={`flex h-full min-w-0 flex-1 flex-col items-center justify-center rounded-3xl transition-colors duration-200 active:scale-95 ${
+                isActive
+                  ? "bg-default-100 text-foreground dark:bg-default-200"
+                  : "text-default-500 hover:text-foreground"
+              }`}
+              onClick={() => navigate(item.path)}
             >
-              <div className="flex-shrink-0 mb-1">{item.icon}</div>
-              <span className="text-xs font-medium">
-                {(isAdmin && item.adminLabel) || item.label}
-              </span>
+              <div className="mb-0.5 flex-shrink-0">{item.icon}</div>
+              <span className="text-[11px] font-medium">{item.label}</span>
             </button>
           );
         })}

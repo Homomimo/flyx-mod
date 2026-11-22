@@ -22,42 +22,21 @@ type Entry = {
 type Fixtures = {
   recordedAt: number;
   admin: Record<string, Entry[]>;
-  user: Record<string, Entry[]>;
 };
-
-export type DemoRole = "admin" | "user";
 
 // The panel reads the role and expiry from the JWT payload; the demo's
 // tokens carry them unsigned (nothing checks a signature here).
 const demoToken = (sub: number, roleId: number, user: string) =>
   `demo.${btoa(JSON.stringify({ sub: String(sub), role_id: roleId, user, exp: 4102444800, iat: 1760000000 }))}.demo`;
 
-const SESSIONS: Record<DemoRole, Record<string, string>> = {
+const SESSIONS: Record<"admin", Record<string, string>> = {
   admin: {
     token: demoToken(1, 0, "admin_user"),
     role_id: "0",
     name: "admin_user",
     admin: "true",
   },
-  user: {
-    token: demoToken(2, 1, "xiaoming"),
-    role_id: "1",
-    name: "xiaoming",
-    admin: "false",
-  },
 };
-
-export function demoRole(): DemoRole {
-  return localStorage.getItem("role_id") === "0" ? "admin" : "user";
-}
-
-/** Signs in as the demo admin or the demo user (and reloads). */
-export function switchDemoRole(role: DemoRole) {
-  for (const [k, v] of Object.entries(SESSIONS[role]))
-    localStorage.setItem(k, v);
-  window.location.hash = "#/dashboard";
-  window.location.reload();
-}
 
 /**
  * Writes report success without a stored result; the first word of the
@@ -132,7 +111,7 @@ let fixtures: Fixtures | null = null;
 const loadFixtures = async (): Promise<Fixtures> =>
   import.meta.env.VITE_DEMO === "true"
     ? ((await import("./fixtures.json")).default as Fixtures)
-    : { recordedAt: 0, admin: {}, user: {} };
+    : { recordedAt: 0, admin: {} };
 
 /**
  * The latest release as the recording saw it. The demo's update hint reads
@@ -158,7 +137,7 @@ async function answer(config: InternalAxiosRequestConfig) {
 
   bare = ALIASES[bare] ?? bare;
   const key = canon(config.data);
-  const book = fixtures[demoRole()];
+  const book = fixtures.admin;
   const entries =
     book[path] ??
     book[bare] ??

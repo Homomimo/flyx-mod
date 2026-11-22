@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+)
 
 type Config struct {
 	Addr        string
@@ -9,6 +12,14 @@ type Config struct {
 	DatabaseURL string
 	JWTSecret   string
 	LogDir      string
+	// StatusThemesDir holds the status page themes the admin installs;
+	// next to the database by default, so it is kept with the data volume.
+	StatusThemesDir string
+	// GeoIPCountryDB is the country database used to detect where nodes are.
+	// Empty: the panel downloads DB-IP's free database next to the database
+	// and refreshes it monthly. A path: the admin's own file, used as is.
+	// "off": no detection.
+	GeoIPCountryDB string
 }
 
 func FromEnv() Config {
@@ -20,6 +31,8 @@ func FromEnv() Config {
 		JWTSecret:   getEnv("JWT_SECRET", ""),
 		LogDir:      getEnv("LOG_DIR", "/app/logs"),
 	}
+	cfg.StatusThemesDir = getEnv("STATUS_THEMES_DIR", filepath.Join(filepath.Dir(cfg.DBPath), "themes"))
+	cfg.GeoIPCountryDB = getEnv("GEOIP_COUNTRY_DB", "")
 
 	return cfg
 }

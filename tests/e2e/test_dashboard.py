@@ -69,13 +69,6 @@ class TestNavigation:
         login_page.goto()
         login_page.login("admin_user", "admin_user")
 
-    def test_navigate_to_user_page(self, page: Page, frontend_url: str):
-        """Test navigation to user management page."""
-        page.goto(f"{frontend_url}/user")
-        page.wait_for_load_state("networkidle")
-
-        assert "/user" in page.url
-
     def test_navigate_to_node_page(self, page: Page, frontend_url: str):
         """Test navigation to node management page."""
         page.goto(f"{frontend_url}/node")

@@ -54,6 +54,21 @@ type SystemInfo struct {
 	UDPConns         int64   `json:"udp_conns"`
 	NetInSpeed       int64   `json:"net_in_speed"`
 	NetOutSpeed      int64   `json:"net_out_speed"`
+	// Capacity, for showing "2 核" and "253 MB / 961 MB": logical CPUs, and
+	// memory and root disk used and total in bytes. Panels that predate these
+	// fields ignore them.
+	CPUCores  int    `json:"cpu_cores,omitempty"`
+	MemUsed   uint64 `json:"mem_used,omitempty"`
+	MemTotal  uint64 `json:"mem_total,omitempty"`
+	DiskUsed  uint64 `json:"disk_used,omitempty"`
+	DiskTotal uint64 `json:"disk_total,omitempty"`
+	// Also reported from this release on.
+	SwapUsed     uint64 `json:"swap_used,omitempty"`
+	SwapTotal    uint64 `json:"swap_total,omitempty"`
+	ProcessCount int64  `json:"process_count,omitempty"`
+	// Host is set on a connection's first report and when the machine's
+	// facts change (see HostFacts).
+	Host *HostFacts `json:"host,omitempty"`
 }
 
 // NetworkStats 网络统计信息
@@ -67,16 +82,21 @@ type NetworkStats struct {
 // CPUInfo CPU信息
 type CPUInfo struct {
 	Usage float64 `json:"usage"`
+	Cores int     `json:"cores"`
 }
 
 // MemoryInfo 内存信息
 type MemoryInfo struct {
 	Usage float64 `json:"usage"`
+	Used  uint64  `json:"used"`
+	Total uint64  `json:"total"`
 }
 
 // DiskInfo 磁盘信息
 type DiskInfo struct {
 	Usage float64 `json:"usage"`
+	Used  uint64  `json:"used"`
+	Total uint64  `json:"total"`
 }
 
 // LoadInfo 负载信息
@@ -184,6 +204,7 @@ type WebSocketReporter struct {
 	readCommandSem    chan struct{}      // 限制只读命令并发，避免诊断请求耗尽资源
 	mutationQueue     chan CommandMessage
 	workers           sync.WaitGroup
+	hostFacts         *hostFactsTracker
 }
 
 var wsDial = func(dialer *websocket.Dialer, rawURL string) (*websocket.Conn, *http.Response, error) {
@@ -216,6 +237,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 		tcpPingQueue:   make(chan queuedTCPPing, maxQueuedTCPPings),
 		readCommandSem: make(chan struct{}, maxConcurrentReadCommands),
 		mutationQueue:  make(chan CommandMessage, maxQueuedMutationCommands),
+		hostFacts:      newHostFactsTracker(),
 	}
 }
 
@@ -530,6 +552,9 @@ func (w *WebSocketReporter) handleConnection() {
 		w.receiveMessages()
 	}()
 
+	// 新连接的第一次上报重新带上主机信息
+	w.hostFacts.reset()
+
 	// 指标上报 ticker
 	metricTicker := time.NewTicker(w.pingInterval)
 	defer metricTicker.Stop()
@@ -569,6 +594,7 @@ func (w *WebSocketReporter) handleConnection() {
 
 			// 获取系统信息并发送
 			sysInfo := w.collectSystemInfo()
+			sysInfo.Host = w.hostFacts.next(time.Now())
 			if err := w.sendSystemInfo(sysInfo); err != nil {
 				fmt.Printf("❌ 发送系统信息失败: %v，准备重连\n", err)
 				return
@@ -593,6 +619,7 @@ func (w *WebSocketReporter) collectSystemInfo() SystemInfo {
 	diskInfo := getDiskInfo()
 	loadInfo := getLoadInfo()
 	connInfo := getConnectionInfo()
+	swapUsed, swapTotal := getSwapInfo()
 
 	now := time.Now().UnixMilli()
 	var netInSpeed, netOutSpeed int64
@@ -621,6 +648,14 @@ func (w *WebSocketReporter) collectSystemInfo() SystemInfo {
 		UDPConns:         connInfo.UDPConns,
 		NetInSpeed:       netInSpeed,
 		NetOutSpeed:      netOutSpeed,
+		CPUCores:         cpuInfo.Cores,
+		MemUsed:          memoryInfo.Used,
+		MemTotal:         memoryInfo.Total,
+		DiskUsed:         diskInfo.Used,
+		DiskTotal:        diskInfo.Total,
+		SwapUsed:         swapUsed,
+		SwapTotal:        swapTotal,
+		ProcessCount:     getProcessCount(),
 	}
 }
 
@@ -1020,7 +1055,7 @@ func (w *WebSocketReporter) routeCommand(ctx context.Context, cmd CommandMessage
 		response.Data, err = handleTuneCommand(cmd.Type, cmd.Data)
 
 	// 代理内核（Xray / sing-box / Snell）相关命令，由 kernel.Manager 自行串行化
-	case "KernelApply", "KernelControl", "KernelStatus":
+	case "KernelApply", "KernelControl", "KernelStatus", "SubscriptionCounters":
 		response.Type = cmd.Type + "Response"
 		response.Data, err = handleKernelCommand(cmd.Type, cmd.Data)
 
@@ -1736,6 +1771,29 @@ func getUptime() uint64 {
 	return uptime
 }
 
+// virtualInterfacePrefixes name interfaces whose traffic also crosses a real
+// one (containers, bridges, tunnels, VPNs) or never leaves the host. Counting
+// them would count the same bytes two or three times, and when one goes away
+// (a container restarts) the sum would drop.
+var virtualInterfacePrefixes = []string{
+	"lo", "docker", "veth", "br-", "virbr", "vnet", "cni", "flannel", "cali",
+	"cilium", "vxlan", "kube", "podman", "lxcbr", "lxdbr", "tun", "tap", "wg",
+	"warp", "tailscale", "zt", "ifb", "dummy", "teql", "sit", "ip6tnl", "gre",
+	"erspan", "ipip", "nlmon",
+}
+
+// virtualInterface reports whether an interface is left out of the node's
+// traffic: only real network cards count, as the provider bills them. Inside
+// an LXC container the card is a veth named eth0, which still counts.
+func virtualInterface(name string) bool {
+	for _, p := range virtualInterfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // getNetworkStats 获取网络统计信息
 func getNetworkStats() NetworkStats {
 	var stats NetworkStats
@@ -1747,7 +1805,7 @@ func getNetworkStats() NetworkStats {
 	}
 
 	for _, io := range ioCounters {
-		if io.Name == "lo" || strings.HasPrefix(io.Name, "lo") {
+		if virtualInterface(io.Name) {
 			continue
 		}
 		stats.BytesReceived += io.BytesRecv
@@ -1773,8 +1831,27 @@ func getCPUInfo() CPUInfo {
 	if err == nil && len(percentages) > 0 {
 		cpuInfo.Usage = percentages[0]
 	}
+	cpuInfo.Cores = cpuCores()
 
 	return cpuInfo
+}
+
+var (
+	cpuCoresOnce  sync.Once
+	cpuCoresValue int
+)
+
+// cpuCores is the number of logical CPUs, read once: it does not change
+// while the agent runs, and reading /proc/cpuinfo every report is wasted work.
+func cpuCores() int {
+	cpuCoresOnce.Do(func() {
+		if n, err := cpu.Counts(true); err == nil && n > 0 {
+			cpuCoresValue = n
+			return
+		}
+		cpuCoresValue = runtime.NumCPU()
+	})
+	return cpuCoresValue
 }
 
 // getMemoryInfo 获取内存信息
@@ -1787,6 +1864,8 @@ func getMemoryInfo() MemoryInfo {
 	}
 
 	memInfo.Usage = vmStat.UsedPercent
+	memInfo.Used = vmStat.Used
+	memInfo.Total = vmStat.Total
 
 	return memInfo
 }
@@ -1801,6 +1880,8 @@ func getDiskInfo() DiskInfo {
 	}
 
 	diskInfo.Usage = usage.UsedPercent
+	diskInfo.Used = usage.Used
+	diskInfo.Total = usage.Total
 
 	return diskInfo
 }

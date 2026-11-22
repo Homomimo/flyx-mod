@@ -16,9 +16,9 @@
 
 FLYX 3.4.0 之前和 flux-panel、FLVX 用的是同一套名字，所以安装脚本只在确认是 FLYX 自己的旧安装时才沿用旧名字，其他面板的安装不会被接管、改写或删除：
 
-- **面板**：已有的 `flux-panel-backend` 容器只有镜像来自 `ghcr.io/kure29/` 时才当作 FLYX 的旧部署；新安装默认放在 `/opt/flyx-panel`（可用 `PANEL_DEPLOY_DIR` 指定），不会覆盖 `/root` 里其他面板的 `.env` 和 `docker-compose.yml`。默认端口 `6366` / `6365` 被占用时，脚本会建议下一个空闲端口。更新、卸载、迁移 PostgreSQL 只处理 FLYX 的部署
+- **面板**：已有的 `flux-panel-backend` 容器只有镜像来自 `ghcr.io/kure29/`（或 3.9.0 发布时短暂使用的 `ghcr.io/seren233/`）时才当作 FLYX 的旧部署；新安装默认放在 `/opt/flyx-panel`（可用 `PANEL_DEPLOY_DIR` 指定），不会覆盖 `/root` 里其他面板的 `.env` 和 `docker-compose.yml`。默认端口 `6366` / `6365` 被占用时，脚本会建议下一个空闲端口。更新、卸载、迁移 PostgreSQL 只处理 FLYX 的部署
 - **节点脚本安装**：`/etc/flux_agent` 只有 `config.json` 里的面板地址和本次安装的一致时才当作 FLYX 的旧节点，否则新装到 `/etc/flyx-agent`，两个 agent 各自运行；交互菜单里没有面板地址，更新或卸载前会先询问。脚本也不再删除 flux-panel 原版的 `gost.service` 和 `/usr/local/bin/gost`
-- **节点 Docker 安装**：已有的 `flux_agent` 容器只有镜像来自 `ghcr.io/kure29/` 时才会被替换
+- **节点 Docker 安装**：已有的 `flux_agent` 容器只有镜像来自 `ghcr.io/kure29/`（或 3.9.0 发布时短暂使用的 `ghcr.io/seren233/`）时才会被替换
 - **nftables 转发**：FLVX 也用 `flvx` 表，新添加的服务器不会读写它
 
 两个面板的 agent 共用宿主机网络，同一个端口只能给其中一个面板的转发使用。
@@ -36,17 +36,18 @@ FLYX 3.4.0 之前和 flux-panel、FLVX 用的是同一套名字，所以安装�
 重新运行安装脚本，选 `2. 更新面板`。脚本会按运行中容器的标签找到部署目录（新安装默认为 `/opt/flyx-panel`）；找不到时，在部署目录（存放 `docker-compose.yml` 和 `.env` 的目录）里运行：
 
 ```bash
-curl -L https://github.com/kure29/flyx/releases/latest/download/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
+curl -L https://github.com/Homomimo/flyx-mod/releases/latest/download/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
 ```
 
 数据会保留，更新前会自动备份到部署目录的 `backups/`。
 
 ## 指定版本
 
-到 [Releases](https://github.com/kure29/flyx/releases) 复制对应版本的命令，例如：
+到 [Releases](https://github.com/Homomimo/flyx-mod/releases) 复制对应版本的命令，例如：
 
 ```bash
-curl -L https://github.com/kure29/flyx/releases/download/3.0.7/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
+VERSION='替换为本仓库已发布的版本号'
+curl -L https://github.com/Homomimo/flyx-mod/releases/download/${VERSION}/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
 ```
 
 ## agent 升级
@@ -57,13 +58,13 @@ curl -L https://github.com/kure29/flyx/releases/download/3.0.7/panel_install.sh 
 
 ### 流量可靠上报
 
-先升级面板，再升级 agent。新版 agent 将已采集、待确认的转发流量保存在工作目录的 `traffic-*.json` 中，网络失败或重启后继续重试；面板按批次去重，账户、配额、共享用量和统计记录一起提交。请保留该目录及文件，容器部署需要保留 agent 数据卷。
+先升级面板，再升级 agent。新版 agent 将已采集、待确认的转发流量保存在工作目录的 `traffic-*.json` 中，网络失败或重启后继续重试；面板按批次去重，规则流量、共享用量和统计记录一起提交。请保留该目录及文件，容器部署需要保留 agent 数据卷。
 
-旧 agent 仍可向新版面板上报，但不能获得跨重试去重和本地待发送缓冲的保障。新版 agent 连接不支持 `/flow/upload/v2` 的旧面板时会保留待上报数据，升级面板后继续发送。缓冲保护已落盘的采样；进程突然退出前尚未采集或落盘的字节无法补回。延迟补报按面板实际入账时间归入配额周期，不回填过去的日、月。
+旧 agent 仍可向新版面板上报，但不能获得跨重试去重和本地待发送缓冲的保障。新版 agent 连接不支持 `/flow/upload/v2` 的旧面板时会保留待上报数据，升级面板后继续发送。缓冲保护已落盘的采样；进程突然退出前尚未采集或落盘的字节无法补回。
 
 面板游标因旧备份恢复或数据库重建而丢失时，节点会保留当前待确认批次，重新建立上报流并继续发送。完整流量数据备份现在同时保存去重游标；导入旧格式完整备份会清理所恢复节点的旧游标，让节点自动重新建立上报流。部分数据导入不替换游标。已被节点确认并删除、但不在备份中的历史用量不能凭空恢复。
 
-明确被面板拒绝的批次会拆分重试，正常条目继续入账。仍无效的单条记录或批次身份冲突会保存在同目录的 `traffic-*.json.rejected-*.json`，并打印日志；这些记录不自动重新计费，需要检查配置和账目后人工处理。留档或队列保存失败时保留原批次。普通网络错误、代理返回的错误页和无法识别的响应不会触发丢弃。
+明确被面板拒绝的批次会拆分重试，正常条目继续入账。仍无效的单条记录或批次身份冲突会保存在同目录的 `traffic-*.json.rejected-*.json`，并打印日志；这些记录不自动重新入账，需要检查配置和账目后人工处理。留档或队列保存失败时保留原批次。普通网络错误、代理返回的错误页和无法识别的响应不会触发丢弃。
 
 ## 修复面板内升级
 
@@ -77,3 +78,22 @@ curl -L https://github.com/kure29/flyx/releases/download/3.0.7/panel_install.sh 
    ```
 
 也可以在该目录运行 3.0.7 及以后的安装脚本，选“更新面板”，会顺带修复。
+
+## 发布仓库是私有仓库
+
+自己 fork 后把仓库设为私有时，GitHub 不再对外提供 Release 文件和镜像，面板内升级、服务器安装和 agent 升级都会失败。给面板配置一个令牌即可恢复（官方仓库 kure29/flyx 是公开的，不需要这一步）：
+
+1. 在 GitHub **Settings** → **Developer settings** → **Personal access tokens (classic)** 新建令牌，勾选 `repo`；面板内升级还要拉取私有镜像，再勾选 `read:packages`。
+2. 在面板部署目录的 `.env` 里加一行 `GITHUB_TOKEN=令牌`，然后 `docker compose up -d` 重建后端（旧版 `docker-compose.yml` 需要在 `backend.environment` 里加上 `GITHUB_TOKEN: ${GITHUB_TOKEN:-}`，见 [常见问题](./faq.md)）。令牌只在面板服务器上，不会显示在网页里，也不会进入备份。
+3. **设置** → **服务器与监控** 打开 **GitHub 加速**，加速地址选 **面板中转**。服务器从面板下载 agent 和安装脚本，令牌只留在面板上，不会下发到服务器。
+
+之后面板内升级、服务器 **升级** 按钮和面板生成的安装命令都和以前一样使用。用 Docker 方式部署的服务器拉取私有镜像前，需要在服务器上先 `docker login ghcr.io`（用户名是 GitHub 用户名，密码是带 `read:packages` 的令牌）。
+
+::: tip
+面板经中转下载私有仓库的文件需要 3.5.7 或更新的版本。面板还是旧版本时，先在部署目录手动升级一次：`docker login ghcr.io` 后，把 `.env` 里的 `FLYX_VERSION` 改成新版本号，再运行 `docker compose pull && docker compose up -d`。
+:::
+
+::: warning
+面板中转对能访问面板地址的人开放，配置令牌后，私有仓库的 Release 文件（agent、安装脚本、compose 文件）也能经面板中转下载，源码不会。
+:::
+

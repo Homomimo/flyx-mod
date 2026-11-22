@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,44 +40,10 @@ func (h *Handler) forwardCreate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("隧道已禁用，无法创建转发"))
 		return
 	}
-	if err := h.ensureUserTunnelForwardAllowed(userID, tunnelID, time.Now().UnixMilli()); err != nil {
-		response.WriteJSON(w, response.ErrDefault(err.Error()))
-		return
-	}
 	name := asString(req["name"])
 	remoteAddr := asString(req["remoteAddr"])
 	if name == "" || remoteAddr == "" {
 		response.WriteJSON(w, response.ErrDefault("转发名称和目标地址不能为空"))
-		return
-	}
-	if roleID != 0 && !h.allowLocalRemoteAddr() {
-		if err := IsSafeRemoteAddr(remoteAddr); err != nil {
-			response.WriteJSON(w, response.Err(403, err.Error()))
-			return
-		}
-	}
-	if roleID != 0 {
-		if speedIDVal, ok := req["speedId"]; ok && speedIDVal != nil {
-			response.WriteJSON(w, response.Err(-1, "普通用户无法设置限速规则"))
-			return
-		}
-	}
-	speedID := asAnyToInt64Ptr(req["speedId"])
-	speedID, err = h.normalizeSpeedLimitReference(speedID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-	if roleID != 0 {
-		if ipSpeedIDVal, ok := req["ipSpeedId"]; ok && ipSpeedIDVal != nil {
-			response.WriteJSON(w, response.Err(-1, "普通用户无法设置每 IP 限速规则"))
-			return
-		}
-	}
-	ipSpeedID := asAnyToInt64Ptr(req["ipSpeedId"])
-	ipSpeedID, err = h.normalizeSpeedLimitReference(ipSpeedID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
 	port := asInt(req["inPort"], 0)
@@ -105,12 +70,6 @@ func (h *Handler) forwardCreate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("多入口隧道的转发不支持自定义监听IP"))
 		return
 	}
-	if inIp != "" && roleID != 0 {
-		if err := h.validateUserListenIP(tunnelID, inIp, nil); err != nil {
-			response.WriteJSON(w, response.ErrDefault(err.Error()))
-			return
-		}
-	}
 	for _, nodeID := range entryNodes {
 		node, nodeErr := h.getNodeRecord(nodeID)
 		if nodeErr != nil {
@@ -135,16 +94,11 @@ func (h *Handler) forwardCreate(w http.ResponseWriter, r *http.Request) {
 	if userName == "" {
 		userName = "user"
 	}
-	maxConn := asInt(req["maxConn"], 0)
-	ipMaxConn := asInt(req["ipMaxConn"], 0)
-	if ipMaxConn < 0 {
-		ipMaxConn = 0
-	}
 	proxyProtocol := asInt(req["proxyProtocol"], 0)
 	proxyProtocolReceive := asInt(req["proxyProtocolReceive"], 0)
 	proxyProtocolSend := asInt(req["proxyProtocolSend"], proxyProtocol)
 
-	forwardID, err := h.repo.CreateForwardTx(userID, userName, name, tunnelID, remoteAddr, defaultString(asString(req["strategy"]), "fifo"), now, inx, entryNodes, port, inIp, nullableInt(speedID), maxConn, ipMaxConn, nullableInt(ipSpeedID), proxyProtocol, proxyProtocolReceive, proxyProtocolSend)
+	forwardID, err := h.repo.CreateForwardTx(userID, userName, name, tunnelID, remoteAddr, defaultString(asString(req["strategy"]), "fifo"), now, inx, entryNodes, port, inIp, proxyProtocol, proxyProtocolReceive, proxyProtocolSend)
 	if err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
@@ -226,56 +180,10 @@ func (h *Handler) forwardUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if actorRole != 0 && !h.allowLocalRemoteAddr() {
-		if err := IsSafeRemoteAddr(remoteAddr); err != nil {
-			response.WriteJSON(w, response.Err(403, err.Error()))
-			return
-		}
-	}
 	strategy := strings.TrimSpace(asString(req["strategy"]))
 	if strategy == "" {
 		strategy = forward.Strategy
 	}
-	rawSpeedID, hasSpeedID := req["speedId"]
-	requestedSpeedID := asAnyToInt64Ptr(rawSpeedID)
-	if actorRole != 0 && hasSpeedID && requestedSpeedID != nil && !sameSpeedLimitSelection(forward.SpeedID, requestedSpeedID) {
-		response.WriteJSON(w, response.Err(-1, "普通用户无法修改限速规则"))
-		return
-	}
-	speedID := requestedSpeedID
-	speedID, err = h.normalizeSpeedLimitReference(speedID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-	newSpeedID := forward.SpeedID
-	if speedID != nil {
-		newSpeedID = sql.NullInt64{Int64: *speedID, Valid: true}
-	} else if _, ok := req["speedId"]; ok {
-		newSpeedID = sql.NullInt64{Valid: false}
-	}
-	rawIPSpeedID, hasIPSpeedID := req["ipSpeedId"]
-	requestedIPSpeedID := asAnyToInt64Ptr(rawIPSpeedID)
-	newIPSpeedID := forward.IPSpeedID
-	if actorRole != 0 {
-		if hasIPSpeedID && !sameSpeedLimitSelection(forward.IPSpeedID, requestedIPSpeedID) {
-			response.WriteJSON(w, response.Err(-1, "普通用户无法修改每 IP 限速规则"))
-			return
-		}
-	} else {
-		ipSpeedID := requestedIPSpeedID
-		ipSpeedID, err = h.normalizeSpeedLimitReference(ipSpeedID)
-		if err != nil {
-			response.WriteJSON(w, response.Err(-2, err.Error()))
-			return
-		}
-		if ipSpeedID != nil {
-			newIPSpeedID = sql.NullInt64{Int64: *ipSpeedID, Valid: true}
-		} else if hasIPSpeedID {
-			newIPSpeedID = sql.NullInt64{Valid: false}
-		}
-	}
-
 	port := asInt(req["inPort"], 0)
 	if port <= 0 {
 		minPort := h.repo.GetMinForwardPort(id)
@@ -296,12 +204,6 @@ func (h *Handler) forwardUpdate(w http.ResponseWriter, r *http.Request) {
 	if hasInIP && strings.TrimSpace(inIp) != "" && len(fwdEntryNodes) > 1 {
 		response.WriteJSON(w, response.ErrDefault("多入口隧道的转发不支持自定义监听IP"))
 		return
-	}
-	if hasInIP && strings.TrimSpace(inIp) != "" && actorRole != 0 {
-		if err := h.validateUserListenIP(tunnelID, inIp, oldPorts); err != nil {
-			response.WriteJSON(w, response.ErrDefault(err.Error()))
-			return
-		}
 	}
 	// When switching tunnels, entry nodes / service base may change. We must clean up old
 	// listeners on nodes that will be removed, otherwise the old ports keep listening.
@@ -333,16 +235,11 @@ func (h *Handler) forwardUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now().UnixMilli()
-	maxConn := asInt(req["maxConn"], forward.MaxConn)
-	ipMaxConn := asInt(req["ipMaxConn"], forward.IPMaxConn)
-	if ipMaxConn < 0 {
-		ipMaxConn = 0
-	}
 	proxyProtocol := asInt(req["proxyProtocol"], forward.ProxyProtocol)
 	proxyProtocolReceive := asInt(req["proxyProtocolReceive"], forward.ProxyProtocolReceive)
 	proxyProtocolSend := asInt(req["proxyProtocolSend"], forward.ProxyProtocolSend)
 
-	if err := h.repo.UpdateForward(id, name, tunnelID, remoteAddr, strategy, now, newSpeedID, maxConn, ipMaxConn, newIPSpeedID, proxyProtocol, proxyProtocolReceive, proxyProtocolSend); err != nil {
+	if err := h.repo.UpdateForward(id, name, tunnelID, remoteAddr, strategy, now, proxyProtocol, proxyProtocolReceive, proxyProtocolSend); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
@@ -548,10 +445,6 @@ func (h *Handler) forwardResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UnixMilli()
-	if err := h.ensureUserTunnelForwardAllowed(forward.UserID, forward.TunnelID, now); err != nil {
-		response.WriteJSON(w, response.ErrDefault(err.Error()))
-		return
-	}
 	if err := h.controlForwardServices(forward, "ResumeService", false); err != nil {
 		response.WriteJSON(w, response.ErrDefault(err.Error()))
 		return
@@ -720,11 +613,6 @@ func (h *Handler) forwardBatchResume(w http.ResponseWriter, r *http.Request) {
 		if accessErr != nil {
 			f++
 			failures = appendBatchFailure(failures, id, "", accessErr)
-			continue
-		}
-		if err := h.ensureUserTunnelForwardAllowed(forward.UserID, forward.TunnelID, now); err != nil {
-			f++
-			failures = appendBatchFailure(failures, id, forward.Name, err)
 			continue
 		}
 		if err := h.controlForwardServices(forward, "ResumeService", false); err != nil {

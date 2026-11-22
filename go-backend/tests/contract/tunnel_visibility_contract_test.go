@@ -60,10 +60,6 @@ func TestUserTunnelVisibleListContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate admin token: %v", err)
 	}
-	userToken, err := auth.GenerateToken(2, "normal_user", 1, secret)
-	if err != nil {
-		t.Fatalf("generate user token: %v", err)
-	}
 
 	t.Run("admin sees all enabled tunnels without user_tunnel rows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tunnel/user/tunnel", nil)
@@ -89,39 +85,6 @@ func TestUserTunnelVisibleListContracts(t *testing.T) {
 		}
 	})
 
-	t.Run("normal user sees enabled assigned tunnels regardless of user_tunnel status", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tunnel/user/tunnel", nil)
-		req.Header.Set("Authorization", userToken)
-		res := httptest.NewRecorder()
-
-		router.ServeHTTP(res, req)
-
-		var out response.R
-		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-			t.Fatalf("decode response: %v", err)
-		}
-		if out.Code != 0 {
-			t.Fatalf("expected code 0, got %d (%s)", out.Code, out.Msg)
-		}
-
-		ids := collectTunnelIDs(t, out.Data)
-		if !ids[enabledA] || !ids[enabledB] {
-			t.Fatalf("expected enabled assigned tunnels for user, got %v", ids)
-		}
-		// The listen IP choices of the forward form (issue #208).
-		for _, item := range out.Data.([]interface{}) {
-			obj := item.(map[string]interface{})
-			if _, ok := obj["inIps"].([]interface{}); !ok {
-				t.Fatalf("expected inIps list in user tunnel item: %v", obj)
-			}
-			if _, ok := obj["inNodeNum"].(float64); !ok {
-				t.Fatalf("expected inNodeNum in user tunnel item: %v", obj)
-			}
-		}
-		if ids[disabledC] {
-			t.Fatalf("did not expect disabled tunnel for user")
-		}
-	})
 }
 
 func collectTunnelIDs(t *testing.T, data interface{}) map[int64]bool {

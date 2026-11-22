@@ -1,7 +1,6 @@
 package repo
 
 import (
-	"database/sql"
 	"errors"
 	"go-backend/internal/store/model"
 	"sort"
@@ -105,88 +104,12 @@ func (r *Repository) UpdateForwardStatus(forwardID int64, status int, now int64)
 	}).Error
 }
 
-func (r *Repository) ListActiveForwardsByUser(userID int64) ([]model.ForwardRecord, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var forwards []model.Forward
-	err := r.db.Where("user_id = ? AND status = 1", userID).Order("id ASC").Find(&forwards).Error
-	if err != nil {
-		return nil, err
-	}
-	rows := make([]model.ForwardRecord, 0, len(forwards))
-	for _, f := range forwards {
-		proxyProtocolReceive, proxyProtocolSend := normalizeForwardProxyProtocol(f.ProxyProtocol, f.ProxyProtocolReceive, f.ProxyProtocolSend)
-		rows = append(rows, model.ForwardRecord{
-			ID:                   f.ID,
-			UserID:               f.UserID,
-			UserName:             f.UserName,
-			Name:                 f.Name,
-			TunnelID:             f.TunnelID,
-			RemoteAddr:           f.RemoteAddr,
-			Strategy:             f.Strategy,
-			Status:               f.Status,
-			SpeedID:              f.SpeedID,
-			MaxConn:              f.MaxConn,
-			IPMaxConn:            f.IPMaxConn,
-			IPSpeedID:            f.IPSpeedID,
-			ProxyProtocol:        f.ProxyProtocol,
-			ProxyProtocolReceive: proxyProtocolReceive,
-			ProxyProtocolSend:    proxyProtocolSend,
-		})
-	}
-	for i := range rows {
-		if strings.TrimSpace(rows[i].Strategy) == "" {
-			rows[i].Strategy = "fifo"
-		}
-	}
-	return rows, nil
-}
-
 func (r *Repository) ListActiveForwardsByUserTunnel(userID, tunnelID int64) ([]model.ForwardRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("repository not initialized")
 	}
 	var forwards []model.Forward
 	err := r.db.Where("user_id = ? AND tunnel_id = ? AND status = 1", userID, tunnelID).Order("id ASC").Find(&forwards).Error
-	if err != nil {
-		return nil, err
-	}
-	rows := make([]model.ForwardRecord, 0, len(forwards))
-	for _, f := range forwards {
-		proxyProtocolReceive, proxyProtocolSend := normalizeForwardProxyProtocol(f.ProxyProtocol, f.ProxyProtocolReceive, f.ProxyProtocolSend)
-		rows = append(rows, model.ForwardRecord{
-			ID:                   f.ID,
-			UserID:               f.UserID,
-			UserName:             f.UserName,
-			Name:                 f.Name,
-			TunnelID:             f.TunnelID,
-			RemoteAddr:           f.RemoteAddr,
-			Strategy:             f.Strategy,
-			Status:               f.Status,
-			SpeedID:              f.SpeedID,
-			MaxConn:              f.MaxConn,
-			IPMaxConn:            f.IPMaxConn,
-			IPSpeedID:            f.IPSpeedID,
-			ProxyProtocol:        f.ProxyProtocol,
-			ProxyProtocolReceive: proxyProtocolReceive,
-			ProxyProtocolSend:    proxyProtocolSend,
-		})
-	}
-	for i := range rows {
-		if strings.TrimSpace(rows[i].Strategy) == "" {
-			rows[i].Strategy = "fifo"
-		}
-	}
-	return rows, nil
-}
-
-func (r *Repository) ListForwardsByUserAndTunnel(userID, tunnelID int64) ([]model.ForwardRecord, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var forwards []model.Forward
-	err := r.db.Where("user_id = ? AND tunnel_id = ?", userID, tunnelID).Order("id ASC").Find(&forwards).Error
 	if err != nil {
 		return nil, err
 	}
@@ -369,48 +292,6 @@ func (r *Repository) MapForwardIDsToTunnelIDs(forwardIDs []int64) (map[int64]int
 	return out, nil
 }
 
-func (r *Repository) SpeedLimitExists(id int64) (bool, error) {
-	if r == nil || r.db == nil {
-		return false, errors.New("repository not initialized")
-	}
-	var count int64
-	err := r.db.Model(&model.SpeedLimit{}).Where("id = ?", id).Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func (r *Repository) CountActiveForwardsByUser(userID int64) (int64, error) {
-	if r == nil || r.db == nil {
-		return 0, errors.New("repository not initialized")
-	}
-	var count int64
-	err := r.db.Model(&model.Forward{}).Where("user_id = ? AND status = 1", userID).Count(&count).Error
-	return count, err
-}
-
-func (r *Repository) CountActiveForwardsByUserTunnel(userID, tunnelID int64) (int64, error) {
-	if r == nil || r.db == nil {
-		return 0, errors.New("repository not initialized")
-	}
-	var count int64
-	err := r.db.Model(&model.Forward{}).Where("user_id = ? AND tunnel_id = ? AND status = 1", userID, tunnelID).Count(&count).Error
-	return count, err
-}
-
-func (r *Repository) GetSpeedLimitSpeed(id int64) (int, error) {
-	if r == nil || r.db == nil {
-		return 0, errors.New("repository not initialized")
-	}
-	var sl model.SpeedLimit
-	err := r.db.Select("speed").Where("id = ?", id).First(&sl).Error
-	if err != nil {
-		return 0, err
-	}
-	return sl.Speed, nil
-}
-
 func sortedFlowUploadTargetIDs(totals map[int64][2]int64) []int64 {
 	ids := make([]int64, 0, len(totals))
 	for id := range totals {
@@ -510,21 +391,6 @@ func applyFlowUploadDeltasTx(tx *gorm.DB, deltas []FlowUploadCounterDelta, now t
 
 // ─── Statistics Queries ──────────────────────────────────────────────
 
-func (r *Repository) GetStatisticsFlows(userID int64, limit int) ([]model.StatisticsFlow, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var items []model.StatisticsFlow
-	err := r.db.Where("user_id = ?", userID).Order("id DESC").Limit(limit).Find(&items).Error
-	if err != nil {
-		return nil, err
-	}
-	if items == nil {
-		items = make([]model.StatisticsFlow, 0)
-	}
-	return items, nil
-}
-
 // ─── Flow ────────────────────────────────────────────────────────────
 
 func (r *Repository) AddFlow(forwardID, userID int64, userTunnelID int64, inFlow, outFlow int64) error {
@@ -561,13 +427,6 @@ func (r *Repository) AddFlow(forwardID, userID int64, userTunnelID int64, inFlow
 
 // ─── Jobs Queries (background stats / expiry) ───────────────────────
 
-func (r *Repository) PurgeOldStatisticsFlows(cutoffMs int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Where("created_time < ?", cutoffMs).Delete(&model.StatisticsFlow{}).Error
-}
-
 func (r *Repository) ListAllUserFlowSnapshots() ([]model.UserFlowSnapshot, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("repository not initialized")
@@ -582,29 +441,4 @@ func (r *Repository) ListAllUserFlowSnapshots() ([]model.UserFlowSnapshot, error
 		out[i] = model.UserFlowSnapshot{UserID: u.ID, InFlow: u.InFlow, OutFlow: u.OutFlow}
 	}
 	return out, nil
-}
-
-func (r *Repository) GetLastStatisticsFlowTotal(userID int64) (sql.NullInt64, error) {
-	if r == nil || r.db == nil {
-		return sql.NullInt64{}, errors.New("repository not initialized")
-	}
-	var sf model.StatisticsFlow
-	err := r.db.Where("user_id = ?", userID).Order("id DESC").First(&sf).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return sql.NullInt64{}, nil
-	}
-	if err != nil {
-		return sql.NullInt64{}, err
-	}
-	return sql.NullInt64{Int64: sf.TotalFlow, Valid: true}, nil
-}
-
-func (r *Repository) CreateStatisticsFlow(userID, flow, totalFlow int64, timeText string, createdTime int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Create(&model.StatisticsFlow{
-		UserID: userID, Flow: flow, TotalFlow: totalFlow,
-		Time: timeText, CreatedTime: createdTime,
-	}).Error
 }

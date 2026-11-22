@@ -54,41 +54,39 @@ func preparePostgresLegacySchema(db *gorm.DB) error {
 	return nil
 }
 
+// prepareSQLiteLegacyColumns adds the columns an older SQLite database is
+// missing to node, tunnel and forward. autoMigrateModels skips those three
+// tables once they exist (GORM's SQLite migrator would rebuild them), so a
+// field added to the model reaches an existing panel only through here.
+// Every field of the model is checked, so a new one cannot be forgotten
+// (node.nft_error was, and adding a server failed on older panels).
 func prepareSQLiteLegacyColumns(db *gorm.DB) error {
 	if db == nil || db.Dialector.Name() != "sqlite" {
 		return nil
 	}
 	m := db.Migrator()
 
-	if m.HasTable(&model.Node{}) {
-		for _, field := range []string{"ServerIPV4", "ServerIPV6", "ExtraIPs", "TCPListenAddr", "UDPListenAddr", "Inx", "IsRemote", "RemoteURL", "RemoteToken", "RemoteConfig", "Remark", "ExpiryTime", "RenewalCycle", "ExpiryReminderDismissed", "LatencyTargets", "NotifyEvents", "NftError"} {
-			if m.HasColumn(&model.Node{}, field) {
-				continue
-			}
-			if err := m.AddColumn(&model.Node{}, field); err != nil {
-				return fmt.Errorf("add node.%s: %w", field, err)
-			}
+	for _, t := range []struct {
+		name  string
+		model interface{}
+	}{
+		{"node", &model.Node{}},
+		{"tunnel", &model.Tunnel{}},
+		{"forward", &model.Forward{}},
+	} {
+		if !m.HasTable(t.model) {
+			continue
 		}
-	}
-
-	if m.HasTable(&model.Tunnel{}) {
-		for _, field := range []string{"Inx", "IPPreference", "ProbeTargetHost", "ProbeTargetPort", "Engine"} {
-			if m.HasColumn(&model.Tunnel{}, field) {
-				continue
-			}
-			if err := m.AddColumn(&model.Tunnel{}, field); err != nil {
-				return fmt.Errorf("add tunnel.%s: %w", field, err)
-			}
+		stmt := &gorm.Statement{DB: db}
+		if err := stmt.Parse(t.model); err != nil {
+			return fmt.Errorf("parse %s model: %w", t.name, err)
 		}
-	}
-
-	if m.HasTable(&model.Forward{}) {
-		for _, field := range []string{"MaxConn", "IPMaxConn", "IPSpeedID", "ProxyProtocol", "ProxyProtocolReceive", "ProxyProtocolSend"} {
-			if m.HasColumn(&model.Forward{}, field) {
+		for _, field := range stmt.Schema.Fields {
+			if field.DBName == "" || field.PrimaryKey || m.HasColumn(t.model, field.DBName) {
 				continue
 			}
-			if err := m.AddColumn(&model.Forward{}, field); err != nil {
-				return fmt.Errorf("add forward.%s: %w", field, err)
+			if err := m.AddColumn(t.model, field.Name); err != nil {
+				return fmt.Errorf("add %s.%s: %w", t.name, field.DBName, err)
 			}
 		}
 	}

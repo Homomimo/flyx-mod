@@ -161,7 +161,7 @@ func (h *Handler) syncRelayProxyProtocol(row model.NodeInbound) []string {
 			continue
 		}
 		if err := h.repo.UpdateForward(fwd.ID, fwd.Name, fwd.TunnelID, fwd.RemoteAddr, fwd.Strategy, time.Now().UnixMilli(),
-			fwd.SpeedID, fwd.MaxConn, fwd.IPMaxConn, fwd.IPSpeedID, 0, fwd.ProxyProtocolReceive, want); err != nil {
+			0, fwd.ProxyProtocolReceive, want); err != nil {
 			problems = append(problems, rel.Name+": "+err.Error())
 			continue
 		}

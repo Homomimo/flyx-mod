@@ -41,6 +41,13 @@ func fakeGitHubMirrorUpstream(t *testing.T, down *atomic.Bool) map[string]*atomi
 			http.Redirect(w, r, "/blob/gost-amd64", http.StatusFound)
 		case "/blob/gost-amd64":
 			_, _ = w.Write([]byte("agent-binary"))
+		// A moved repository: GitHub sends old URLs on.
+		case "/seren233/flyx/releases/download/3.3.6/gost-amd64", "/seren233/flyx/releases/latest":
+			w.Header().Set("Location", "http://"+r.Host+strings.Replace(r.URL.Path, "/seren233/", "/kure29/", 1))
+			w.WriteHeader(http.StatusMovedPermanently)
+		case "/kure29/flyx/releases/latest":
+			w.Header().Set("Location", "https://github.com/kure29/flyx/releases/tag/3.9.0")
+			w.WriteHeader(http.StatusFound)
 		case "/v2fly/geoip/releases/latest":
 			w.Header().Set("Location", "https://github.com/v2fly/geoip/releases/tag/202610")
 			w.WriteHeader(http.StatusFound)
@@ -204,5 +211,23 @@ func TestGithubMirrorRedirectsStayOnGitHub(t *testing.T) {
 	}
 	if !isPanelGithubMirror("https://panel.example.com/api/v1/open_api/gh/") || isPanelGithubMirror("https://gcode.hostcentral.cc") {
 		t.Fatal("isPanelGithubMirror")
+	}
+}
+
+func TestGithubMirrorFollowsMovedRepository(t *testing.T) {
+	var down atomic.Bool
+	fakeGitHubMirrorUpstream(t, &down)
+
+	// Node scripts installed from seren233 still ask for seren233/flyx.
+	rec := mirrorGet(t, "https://github.com/seren233/flyx/releases/download/3.3.6/gost-amd64")
+	if rec.Code != http.StatusOK || rec.Body.String() != "agent-binary" {
+		t.Fatalf("old repository download = %d %q", rec.Code, rec.Body.String())
+	}
+	tag, err := ghMirrorLatestTag("seren233/flyx", "")
+	if err != nil || tag != "3.9.0" {
+		t.Fatalf("latest tag of the moved repository = %q, %v", tag, err)
+	}
+	if got := ghMirrorMovedRepo("https://evil.example/a/b/releases/latest", "/releases/latest"); got != "" {
+		t.Fatalf("redirect off GitHub followed: %q", got)
 	}
 }

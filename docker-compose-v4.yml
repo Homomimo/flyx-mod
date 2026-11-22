@@ -2,7 +2,7 @@
 # New installations write explicit FLYX resource names into .env.
 services:
   backend:
-    image: ghcr.io/kure29/flyx-panel-backend:${FLYX_VERSION:-${FLUX_VERSION:-latest}}
+    image: ghcr.io/homomimo/flyx-panel-backend:${FLYX_VERSION:-${FLUX_VERSION:-latest}}
     container_name: ${PANEL_BACKEND_CONTAINER:-flux-panel-backend}
     restart: unless-stopped
     logging:
@@ -66,7 +66,7 @@ services:
       start_period: 20s
 
   frontend:
-    image: ghcr.io/kure29/flyx-panel-frontend:${FLYX_VERSION:-${FLUX_VERSION:-latest}}
+    image: ghcr.io/homomimo/flyx-panel-frontend:${FLYX_VERSION:-${FLUX_VERSION:-latest}}
     container_name: ${PANEL_FRONTEND_CONTAINER:-vite-frontend}
     restart: unless-stopped
     logging:

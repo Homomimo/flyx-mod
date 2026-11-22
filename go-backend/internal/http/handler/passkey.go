@@ -370,7 +370,7 @@ func (h *Handler) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := h.repo.GetUserByID(u.id)
-	if err != nil || user == nil || user.Status != 1 {
+	if err != nil || user == nil || user.Status != 1 || user.RoleID != 0 {
 		response.WriteJSON(w, response.ErrDefault("账号不可用"))
 		return
 	}

@@ -60,8 +60,6 @@ Create a new tunnel.
 {
   "name": "JP-SG-Tunnel",
   "type": 1,
-  "flow": 1,
-  "trafficRatio": 1,
   "status": 1,
   "ipPreference": "ipv4",
   "inIp": "",
@@ -77,8 +75,6 @@ Create a new tunnel.
 |-------|------|----------|-------------|
 | name | string | Yes | Tunnel name |
 | type | number | Yes | 1=port forward, 2=tunnel forward |
-| flow | number | No | Traffic multiplier (default: 1) |
-| trafficRatio | number | No | Traffic ratio (default: 1) |
 | status | number | No | 1=active, 0=disabled (default: 1) |
 | ipPreference | string | No | "ipv4", "ipv6", or "" (both) |
 | inIp | string | No | Custom entry IP |
@@ -165,149 +161,3 @@ Redeploy multiple tunnels (recreate forwarding services).
 ```
 
 ---
-
-## User-Tunnel Assignment
-
-These endpoints manage which users can use which tunnels.
-
-### POST /api/v1/tunnel/user/tunnel
-
-List tunnels visible to the current user (or all tunnels for admin).
-
-**Request:** `{}`
-
-**Response:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "id": 1,
-      "name": "HK-US-Tunnel",
-      "type": 1,
-      "status": 1,
-      "in_node_name": "HK-Node-1",
-      "out_node_name": "US-Node-1"
-    }
-  ]
-}
-```
-
-### POST /api/v1/tunnel/user/list
-
-List user-tunnel assignments (admin only).
-
-**Request:**
-```json
-{
-  "page": 1,
-  "pageSize": 20,
-  "userId": 2
-}
-```
-
-**Response:**
-```json
-{
-  "code": 0,
-  "data": {
-    "list": [
-      {
-        "id": 1,
-        "user_id": 2,
-        "tunnel_id": 1,
-        "tunnel_name": "HK-US-Tunnel",
-        "flow": 50,
-        "in_flow": 1073741824,
-        "out_flow": 2147483648,
-        "exp_time": 0,
-        "speed_id": 0
-      }
-    ],
-    "total": 1
-  }
-}
-```
-
-### POST /api/v1/tunnel/user/assign
-
-Assign a tunnel to a user.
-
-**Request:**
-```json
-{
-  "userId": 2,
-  "tunnelId": 1,
-  "flow": 50,
-  "expTime": 0,
-  "speedId": 0
-}
-```
-
-**Fields:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| userId | number | Yes | User ID |
-| tunnelId | number | Yes | Tunnel ID |
-| flow | number | No | Traffic quota for this tunnel in GB |
-| expTime | number | No | Expiry for this assignment (ms, 0=never) |
-| speedId | number | No | Speed limit rule ID |
-
-### POST /api/v1/tunnel/user/batch-assign
-
-Batch assign tunnels to a user.
-
-**Request:**
-```json
-{
-  "userId": 2,
-  "tunnelIds": [1, 2, 3],
-  "flow": 50,
-  "expTime": 0
-}
-```
-
-### POST /api/v1/tunnel/user/remove
-
-Remove a tunnel from a user.
-
-**Request:**
-```json
-{
-  "userId": 2,
-  "tunnelId": 1
-}
-```
-
-### POST /api/v1/tunnel/user/update
-
-Update user-tunnel assignment settings.
-
-**Request:**
-```json
-{
-  "id": 1,
-  "flow": 100,
-  "expTime": 1767225600000,
-  "speedId": 2
-}
-```
-
-## Example: Assign Tunnel to User
-
-```bash
-# 1. Create tunnel
-TUNNEL_RESP=$(curl -s -X POST "${FLYX_BASE_URL}/api/v1/tunnel/create" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test-Tunnel","type":1,"inNodeId":[1],"outNodeId":[2]}')
-
-TUNNEL_ID=$(echo "$TUNNEL_RESP" | jq -r '.data.id')
-
-# 2. Assign to user with 30GB quota
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/tunnel/user/assign" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d "{\"userId\":2,\"tunnelId\":${TUNNEL_ID},\"flow\":30}"
-```

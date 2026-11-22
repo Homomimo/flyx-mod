@@ -202,7 +202,7 @@ func TestBuildNftCounterDeltasSkipsUnknownDirectionAndOversizedDelta(t *testing.
 	}
 }
 
-func TestBuildNftFlowUploadBatchScalesFlowAndPreservesRawTunnelTraffic(t *testing.T) {
+func TestBuildNftFlowUploadBatchCountsRawBytesAndTunnelTraffic(t *testing.T) {
 	batch := buildNftFlowUploadBatch([]nftTrafficDelta{
 		{ForwardID: 20, BytesIn: 80, BytesOut: 110},
 		{ForwardID: 21, BytesIn: 7, BytesOut: 11},
@@ -215,44 +215,18 @@ func TestBuildNftFlowUploadBatchScalesFlowAndPreservesRawTunnelTraffic(t *testin
 	if len(batch.flowDeltas) != 2 {
 		t.Fatalf("expected two flow deltas, got %#v", batch.flowDeltas)
 	}
-	if batch.flowDeltas[0].ForwardID != 20 || batch.flowDeltas[0].InFlow != 200 || batch.flowDeltas[0].OutFlow != 240 {
+	// Legacy ratios on the tunnels are ignored: bytes count as they are.
+	if batch.flowDeltas[0].ForwardID != 20 || batch.flowDeltas[0].InFlow != 100 || batch.flowDeltas[0].OutFlow != 120 || batch.flowDeltas[0].UserTunnelID != 0 {
 		t.Fatalf("unexpected first flow delta: %#v", batch.flowDeltas[0])
 	}
-	if batch.flowDeltas[1].ForwardID != 21 || batch.flowDeltas[1].InFlow != 10 || batch.flowDeltas[1].OutFlow != 16 {
+	if batch.flowDeltas[1].ForwardID != 21 || batch.flowDeltas[1].InFlow != 7 || batch.flowDeltas[1].OutFlow != 11 {
 		t.Fatalf("unexpected second flow delta: %#v", batch.flowDeltas[1])
-	}
-	if batch.quotaUsage[2] != 466 {
-		t.Fatalf("expected quota usage 466, got %d", batch.quotaUsage[2])
-	}
-	if len(batch.policyTargets) != 1 || batch.policyTargets[0].UserID != 2 || batch.policyTargets[0].UserTunnelID != 10 {
-		t.Fatalf("expected deduped policy target, got %#v", batch.policyTargets)
 	}
 	if traffic := batch.forwardTraffic[20]; traffic.bytesIn != 100 || traffic.bytesOut != 120 {
 		t.Fatalf("expected raw traffic for forward 20, got %#v", traffic)
 	}
 	if traffic := batch.forwardTraffic[21]; traffic.bytesIn != 7 || traffic.bytesOut != 11 {
 		t.Fatalf("expected raw traffic for forward 21, got %#v", traffic)
-	}
-}
-
-func TestBuildNftFlowUploadBatchSkipsOverflowingScaledFlow(t *testing.T) {
-	batch := buildNftFlowUploadBatch([]nftTrafficDelta{
-		{ForwardID: 20, BytesIn: math.MaxInt64, BytesOut: 0},
-	}, map[int64]repo.FlowUploadForwardMeta{
-		20: {ForwardID: 20, UserID: 2, UserTunnelID: 10, TrafficRatio: 2, TunnelFlow: 2},
-	})
-
-	if len(batch.flowDeltas) != 0 {
-		t.Fatalf("expected overflowing scaled flow to be skipped, got %#v", batch.flowDeltas)
-	}
-	if len(batch.quotaUsage) != 0 {
-		t.Fatalf("expected no quota usage for overflowing scaled flow, got %#v", batch.quotaUsage)
-	}
-	if len(batch.policyTargets) != 0 {
-		t.Fatalf("expected no policy targets for overflowing scaled flow, got %#v", batch.policyTargets)
-	}
-	if len(batch.forwardTraffic) != 0 {
-		t.Fatalf("expected no raw traffic for overflowing scaled flow, got %#v", batch.forwardTraffic)
 	}
 }
 
@@ -270,32 +244,6 @@ func TestBuildNftFlowUploadBatchSkipsRawForwardTrafficOverflow(t *testing.T) {
 	}
 	if len(batch.flowDeltas) != 1 || batch.flowDeltas[0].ForwardID != 20 {
 		t.Fatalf("expected only the safe flow delta, got %#v", batch.flowDeltas)
-	}
-	if len(batch.policyTargets) != 1 || batch.policyTargets[0].UserID != 2 || batch.policyTargets[0].UserTunnelID != 10 {
-		t.Fatalf("expected policy target only from safe delta, got %#v", batch.policyTargets)
-	}
-}
-
-func TestBuildNftFlowUploadBatchSkipsQuotaOverflow(t *testing.T) {
-	batch := buildNftFlowUploadBatch([]nftTrafficDelta{
-		{ForwardID: 20, BytesIn: math.MaxInt64, BytesOut: 0},
-		{ForwardID: 21, BytesIn: 1, BytesOut: 0},
-	}, map[int64]repo.FlowUploadForwardMeta{
-		20: {ForwardID: 20, UserID: 2, UserTunnelID: 10, TrafficRatio: 1, TunnelFlow: 1},
-		21: {ForwardID: 21, UserID: 2, UserTunnelID: 10, TrafficRatio: 1, TunnelFlow: 1},
-	})
-
-	if len(batch.flowDeltas) != 1 || batch.flowDeltas[0].ForwardID != 20 || batch.flowDeltas[0].InFlow != math.MaxInt64 {
-		t.Fatalf("expected only non-overflowing quota delta, got %#v", batch.flowDeltas)
-	}
-	if batch.quotaUsage[2] != math.MaxInt64 {
-		t.Fatalf("expected quota usage to remain at max int64, got %#v", batch.quotaUsage)
-	}
-	if len(batch.policyTargets) != 1 || batch.policyTargets[0].UserID != 2 || batch.policyTargets[0].UserTunnelID != 10 {
-		t.Fatalf("expected one policy target from non-overflowing delta, got %#v", batch.policyTargets)
-	}
-	if _, ok := batch.forwardTraffic[21]; ok {
-		t.Fatalf("expected quota-overflowing delta to be skipped from raw traffic")
 	}
 }
 
@@ -409,12 +357,6 @@ func TestCollectNftablesNodeTrafficGrowthAppliesFlowAndUpdatesState(t *testing.T
 	if got := mustHandlerCount(t, h, `SELECT in_flow FROM user WHERE id = 1`); got != 400 {
 		t.Fatalf("expected user in_flow=400, got %d", got)
 	}
-	if got := mustHandlerCount(t, h, `SELECT out_flow FROM user_tunnel WHERE id = ?`, fixture.userTunnelID); got != 600 {
-		t.Fatalf("expected user_tunnel out_flow=600, got %d", got)
-	}
-	if got := mustHandlerCount(t, h, `SELECT COALESCE((SELECT daily_used_bytes FROM user_quota WHERE user_id = 1), 0)`); got != 1000 {
-		t.Fatalf("expected daily quota usage=1000, got %d", got)
-	}
 	states, err := h.repo.GetNftCounterStatesByNode(fixture.nodeID)
 	if err != nil {
 		t.Fatalf("load states: %v", err)
@@ -429,41 +371,6 @@ func TestCollectNftablesNodeTrafficGrowthAppliesFlowAndUpdatesState(t *testing.T
 		if state.Direction == runtimenft.CounterDirectionFromTarget && state.Bytes != 2600 {
 			t.Fatalf("expected from-target state bytes 2600, got %+v", state)
 		}
-	}
-}
-
-func TestCollectNftablesNodeTrafficSkippedBatchDeltaDoesNotAdvanceState(t *testing.T) {
-	fixture := setupNftablesCollectionFixture(t)
-	h := fixture.handler
-	if err := h.repo.DB().Exec(`UPDATE tunnel SET traffic_ratio = 2 WHERE id = (SELECT tunnel_id FROM forward WHERE id = ?)`, fixture.forwardID).Error; err != nil {
-		t.Fatalf("update tunnel ratio: %v", err)
-	}
-	manager := &fakeNftablesManager{}
-	h.nftablesManager = manager
-	cfg := mustCollectionSSHConfig(t, h, fixture.nodeID)
-
-	manager.counterSamples = []runtimenft.CounterSample{
-		{ForwardID: fixture.forwardID, Protocol: "tcp", Direction: runtimenft.CounterDirectionToTarget, Bytes: 0, Packets: 0},
-	}
-	h.collectNftablesNodeTraffic(fixture.nodeID, cfg, time.Unix(1700000000, 0))
-
-	manager.counterSamples = []runtimenft.CounterSample{
-		{ForwardID: fixture.forwardID, Protocol: "tcp", Direction: runtimenft.CounterDirectionToTarget, Bytes: uint64(math.MaxInt64), Packets: 1},
-	}
-	h.collectNftablesNodeTraffic(fixture.nodeID, cfg, time.Unix(1700000060, 0))
-
-	states, err := h.repo.GetNftCounterStatesByNode(fixture.nodeID)
-	if err != nil {
-		t.Fatalf("load states: %v", err)
-	}
-	if len(states) != 1 {
-		t.Fatalf("expected one state, got %+v", states)
-	}
-	if states[0].Bytes != 0 || states[0].Packets != 0 {
-		t.Fatalf("expected state to remain at old baseline after skipped batch delta, got %+v", states[0])
-	}
-	if got := mustHandlerCount(t, h, `SELECT in_flow FROM forward WHERE id = ?`, fixture.forwardID); got != 0 {
-		t.Fatalf("expected no forward flow for skipped batch delta, got %d", got)
 	}
 }
 
@@ -697,7 +604,7 @@ func TestForwardCounterAccountingIsolatesMissingMetadata(t *testing.T) {
 	h.accountForwardCounterSamples(f.nodeID, sample(100), hashes, now)
 	h.accountForwardCounterSamples(f.nodeID, sample(150), hashes, now.Add(time.Minute))
 	h.accountForwardCounterSamples(f.nodeID, sample(200), hashes, now.Add(2*time.Minute))
-	for _, query := range []string{"SELECT in_flow FROM forward", "SELECT in_flow FROM user WHERE id=1", "SELECT in_flow FROM user_tunnel", "SELECT daily_used_bytes FROM user_quota WHERE user_id=1"} {
+	for _, query := range []string{"SELECT in_flow FROM forward", "SELECT in_flow FROM user WHERE id=1"} {
 		if got := mustHandlerCount(t, h, query); got != 100 {
 			t.Errorf("%s: got %d want 100", query, got)
 		}

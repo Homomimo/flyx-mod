@@ -39,8 +39,8 @@ export const NOTIFY_EVENTS = [
   ...NODE_NOTIFY_EVENTS,
   {
     key: "user_quota",
-    label: "用户流量 / 到期",
-    description: "转发用户流量用到 90%、用完或 3 天内到期，共享用户 3 天内到期",
+    label: "分享订阅流量 / 到期",
+    description: "分享出去的订阅流量用到 90%、用完，或 3 天内到期",
   },
   {
     key: "backup_failed",

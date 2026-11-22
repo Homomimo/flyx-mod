@@ -52,7 +52,7 @@ func TestPrepareSQLiteLegacyColumnsAddsNodeMetadataColumns(t *testing.T) {
 	}
 
 	m := db.Migrator()
-	for _, field := range []string{"Remark", "ExpiryTime", "RenewalCycle", "LatencyTargets", "NotifyEvents"} {
+	for _, field := range []string{"Remark", "ExpiryTime", "RenewalCycle", "LatencyTargets", "NotifyEvents", "NftError", "ForwardMode"} {
 		if !m.HasColumn(&model.Node{}, field) {
 			t.Fatalf("expected node.%s column to exist", field)
 		}
@@ -529,5 +529,32 @@ func TestAlterPostgresColumnToBigIntIfNeededValidatesNames(t *testing.T) {
 	}
 	if err := alterPostgresColumnToBigIntIfNeeded(&gorm.DB{}, "peer_share", ""); err == nil || !strings.Contains(err.Error(), "empty table or column name") {
 		t.Fatalf("expected empty name error, got %v", err)
+	}
+}
+
+// A panel whose node table predates nft_error (every column but that one)
+// must be able to add a server after upgrading.
+func TestOpenAddsMissingNodeColumnsSoNodesCanBeCreated(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	r, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := r.DB().Exec("ALTER TABLE node DROP COLUMN nft_error").Error; err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	_ = r.Close()
+
+	r, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer r.Close()
+	if !r.DB().Migrator().HasColumn(&model.Node{}, "nft_error") {
+		t.Fatal("node.nft_error was not added back")
+	}
+	if err := r.CreateNode("n1", "secret", "203.0.113.1", "203.0.113.1", nil, "1000-2000", nil, nil, nil, nil, nil,
+		0, 0, 0, 1, 0, "[::]", "[::]", 0, 0, nil, nil, nil, nil, "agent", nil); err != nil {
+		t.Fatalf("create node: %v", err)
 	}
 }

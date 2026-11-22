@@ -241,3 +241,37 @@ func assertCodeMsg(t *testing.T, rec *httptest.ResponseRecorder, expectedCode in
 		t.Fatalf("expected (%d,%q), got (%d,%q)", expectedCode, expectedMsg, out.Code, out.Msg)
 	}
 }
+
+func TestShouldSkipBypassesPublicStatus(t *testing.T) {
+	if !shouldSkip("/api/v1/public/status") {
+		t.Fatal("expected /api/v1/public/status to be public")
+	}
+}
+
+func TestJWTRejectsNonAdminToken(t *testing.T) {
+	secret := "unit-test-secret"
+	token, err := auth.GenerateToken(2, "alice", 1, secret)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	wrapped := JWT(AuthOptions{
+		JWTSecret: secret,
+		GetUserAuthState: func(userID int64) (*auth.UserAuthState, error) {
+			return &auth.UserAuthState{ID: userID, RoleID: 1, Status: 1}, nil
+		},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response.WriteJSON(w, response.OK("pass"))
+	}))
+	// Even a path ordinary users could use before: FLYX is single-user now.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/forward/list", nil)
+	req.Header.Set("Authorization", token)
+	res := httptest.NewRecorder()
+	wrapped.ServeHTTP(res, req)
+	assertCodeMsg(t, res, 401, "只有管理员可以登录")
+}
+
+func TestShouldSkipBypassesLoginMethods(t *testing.T) {
+	if !shouldSkip("/api/v1/user/login/methods") {
+		t.Fatal("the login page reads the login methods before anyone logs in")
+	}
+}

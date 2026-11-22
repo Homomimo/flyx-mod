@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,7 +23,7 @@ type failedForward struct {
 // githubRepo is where releases (node installer, agent binaries, panel
 // compose files) are fetched from. Release builds set it to the repository
 // that built them via -ldflags "-X go-backend/internal/http/handler.githubRepo=owner/repo".
-var githubRepo = "kure29/flyx"
+var githubRepo = "Homomimo/flyx-mod"
 
 const (
 	githubAPIBase  = "https://api.github.com"
@@ -166,7 +165,7 @@ func requestGitHubReleases() ([]githubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+	if token := githubToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
@@ -185,6 +184,9 @@ func decodeGitHubReleases(resp *http.Response) ([]githubRelease, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if resp.StatusCode == http.StatusTooManyRequests || strings.Contains(strings.ToLower(string(body)), "rate limit") {
 			return nil, fmt.Errorf("GitHub API 请求次数超限（未认证每个 IP 每小时 60 次），请稍后再试，或给面板设置环境变量 GITHUB_TOKEN")
+		}
+		if resp.StatusCode == http.StatusNotFound && githubToken() == "" {
+			return nil, fmt.Errorf("GitHub 找不到仓库 %s 的发布（私有仓库需要给面板设置环境变量 GITHUB_TOKEN）", githubRepo)
 		}
 		return nil, fmt.Errorf("GitHub API返回 %d: %s", resp.StatusCode, string(body))
 	}
@@ -481,7 +483,6 @@ func (h *Handler) onNodeOnline(nodeID int64) {
 	if node, err := h.getNodeRecord(nodeID); err == nil && (node == nil || node.Status != 1) {
 		return // The next connection will resume any pending reconciliation.
 	}
-	h.invalidateNodeQuotaAcknowledgements(nodeID)
 	go func() {
 		h.reconcileNodeKernels(nodeID)
 		// Probe once the kernels are restored: earlier, the node's ports

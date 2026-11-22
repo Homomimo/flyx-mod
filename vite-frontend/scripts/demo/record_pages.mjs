@@ -43,7 +43,7 @@ await session("admin", "admin_user", "admin_user", [
   ["/node", [click("香港 HKT")]],
   ["/inbound", [click("香港 Reality"), chain(click(/^内核/)), chain(click("订阅源"))]],
   ["/relay", [click("上海移动 → 香港")]],
-  ["/forward"], ["/tunnel"], ["/limit"], ["/user", [click("xiaoming")]], ["/group"], ["/panel-sharing"], ["/monitor"],
+  ["/forward"], ["/tunnel"], ["/panel-sharing"], ["/monitor"],
   ["/subscription", [
     click("小明 · 手机"),
     chain(click("小明 · 手机"), (p) => p.getByRole("button", { name: "编辑" }).first().click(), (p) => p.getByRole("tab", { name: /规则/ }).click(), (p) => p.getByRole("tab", { name: /预览/ }).click()),
@@ -52,9 +52,8 @@ await session("admin", "admin_user", "admin_user", [
   ["/config"],
   ["/profile"],
 ]);
-await session("user", "xiaoming", "demo123456", [["/dashboard"], ["/my-subscriptions"], ["/forward"], ["/profile"]]);
 fs.writeFileSync(out, JSON.stringify(rec));
 const n = (r) => Object.keys(rec[r]).length;
-console.log("admin paths", n("admin"), "user paths", n("user"));
+console.log("admin paths", n("admin"));
 console.log(errs.slice(0, 30).join("\n"));
 await browser.close();

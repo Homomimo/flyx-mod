@@ -17,6 +17,22 @@ export interface Node {
   remark?: string;
   expiryTime?: number;
   renewalCycle?: NodeRenewalCycle;
+  /** 管理员选的地区（ISO 代码），空为自动识别。 */
+  region?: string;
+  /** 面板按地址识别出的地区。 */
+  regionDetected?: string;
+  /** The admin's group ("" = none) and the note shown on the status page. */
+  group?: string;
+  publicNote?: string;
+  /** Price per renewal cycle in currency (ISO 4217, "" = CNY); 0 = none. */
+  price?: number;
+  currency?: string;
+  /** Monthly traffic quota (GB, 0 = none), how it is counted, reset day. */
+  trafficQuotaGb?: number;
+  trafficCalc?: TrafficCalc;
+  trafficResetDay?: number;
+  /** Shown on the public status page. */
+  statusVisible?: boolean;
   expiryReminderDismissed?: number;
   ip: string;
   serverIp: string;
@@ -27,6 +43,12 @@ export interface Node {
   udpListenAddr?: string;
   extraIPs?: string;
   version?: string;
+  /** What the agent reports about the machine (agents 3.9.0 on). */
+  hostOs?: string;
+  hostKernel?: string;
+  hostArch?: string;
+  hostCpuName?: string;
+  hostVirtualization?: string;
   http?: number; // 0 关 1 开
   tls?: number; // 0 关 1 开
   socks?: number; // 0 关 1 开
@@ -52,13 +74,32 @@ export interface Node {
   rollbackLoading?: boolean;
 }
 
+/** How traffic counts against the quota: up + down, the larger, one side. */
+export type TrafficCalc = "" | "max" | "up" | "down";
+
 export interface NodeForm {
   id: number | null;
   name: string;
   remark: string;
+  group: string;
+  publicNote: string;
+  statusVisible: boolean;
+  /** Typed values; "" is none. */
+  price: string;
+  currency: string;
+  trafficQuotaGb: string;
+  trafficCalc: TrafficCalc;
+  trafficResetDay: string;
+  /** 流量校正: what the provider says was used this period (GB); "" = keep. */
+  correctUpGb: string;
+  correctDownGb: string;
   notifyEvents: NodeNotifyEvents;
   expiryTime: number;
   renewalCycle: NodeRenewalCycle;
+  /** 管理员选的地区（ISO 代码），空为自动识别。 */
+  region: string;
+  /** 面板按地址识别出的地区，只读。 */
+  regionDetected: string;
   serverHost: string;
   serverIpV4: string;
   serverIpV6: string;

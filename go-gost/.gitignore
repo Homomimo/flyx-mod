@@ -1,5 +1,5 @@
-/gost
-/gost_*
-/gost-*
+gost
+gost_*
+gost-*
 *.sha256
 *.exe

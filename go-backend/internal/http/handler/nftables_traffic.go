@@ -113,10 +113,9 @@ func (h *Handler) accountForwardCounterSamples(nodeID int64, samples []runtimenf
 
 func (h *Handler) accountForwardCounterSamplesOrdered(nodeID int64, samples []runtimenft.CounterSample, hashes map[int64]string, now time.Time, source string, sequence int64, epoch string) {
 	var batch flowUploadBatch
-	var quotas map[int64]*model.UserQuotaView
 	applied, err := h.repo.ApplyCounterSnapshot(nodeID, source, sequence, epoch, func(tx *repo.Repository) error {
 		var err error
-		batch, quotas, err = (&Handler{repo: tx}).accountForwardCounterSamplesTx(nodeID, samples, hashes, now)
+		batch, err = (&Handler{repo: tx}).accountForwardCounterSamplesTx(nodeID, samples, hashes, now)
 		return err
 	})
 	if err != nil {
@@ -124,15 +123,15 @@ func (h *Handler) accountForwardCounterSamplesOrdered(nodeID int64, samples []ru
 		return
 	}
 	if applied {
-		h.enforceFlowUploadBatch(nodeID, batch, quotas)
+		h.enforceFlowUploadBatch(nodeID, batch)
 	}
 }
 
-func (h *Handler) accountForwardCounterSamplesTx(nodeID int64, samples []runtimenft.CounterSample, hashes map[int64]string, now time.Time) (flowUploadBatch, map[int64]*model.UserQuotaView, error) {
+func (h *Handler) accountForwardCounterSamplesTx(nodeID int64, samples []runtimenft.CounterSample, hashes map[int64]string, now time.Time) (flowUploadBatch, error) {
 	oldStates, err := h.repo.GetNftCounterStatesByNode(nodeID)
 	if err != nil {
 		log.Printf("forward counter accounting failed op=list_states node_id=%d err=%v", nodeID, err)
-		return flowUploadBatch{}, nil, err
+		return flowUploadBatch{}, err
 	}
 	nowMs := now.UnixMilli()
 	deltas, newStates := buildNftCounterDeltas(nodeID, samples, oldStates, hashes, nowMs)
@@ -140,7 +139,7 @@ func (h *Handler) accountForwardCounterSamplesTx(nodeID int64, samples []runtime
 		if len(deltas) != 0 {
 			log.Printf("forward counter accounting skipped suspicious deltas without states node_id=%d deltas=%d", nodeID, len(deltas))
 		}
-		return flowUploadBatch{}, nil, nil
+		return flowUploadBatch{}, nil
 	}
 
 	var metas map[int64]repo.FlowUploadForwardMeta
@@ -154,15 +153,14 @@ func (h *Handler) accountForwardCounterSamplesTx(nodeID int64, samples []runtime
 		metas, err = h.repo.GetFlowUploadForwardMetas(forwardIDs)
 		if err != nil {
 			log.Printf("forward counter accounting failed op=load_flow_metas node_id=%d err=%v", nodeID, err)
-			return flowUploadBatch{}, nil, err
+			return flowUploadBatch{}, err
 		}
 		// A deleted rule can remain on the node after a failed cleanup. Keep
 		// its baseline for a later retry without blocking unrelated forwards.
-		// Invalid stored billing settings are isolated the same way.
 		missing := make(map[int64]struct{})
 		keptDeltas := deltas[:0]
 		for _, delta := range deltas {
-			if meta, exists := metas[delta.ForwardID]; !exists || !validTunnelBilling(meta.TunnelFlow, meta.TrafficRatio) {
+			if _, exists := metas[delta.ForwardID]; !exists {
 				missing[delta.ForwardID] = struct{}{}
 				log.Printf("forward counter accounting skipped state advance op=unusable_flow_meta node_id=%d forward_id=%d", nodeID, delta.ForwardID)
 				continue
@@ -178,31 +176,30 @@ func (h *Handler) accountForwardCounterSamplesTx(nodeID int64, samples []runtime
 		}
 		newStates = keptStates
 		if len(newStates) == 0 {
-			return flowUploadBatch{}, nil, nil
+			return flowUploadBatch{}, nil
 		}
 	}
 	if len(deltas) == 0 {
 		if err := h.repo.UpsertNftCounterStates(newStates, nowMs); err != nil {
 			log.Printf("forward counter accounting failed op=upsert_states node_id=%d err=%v", nodeID, err)
-			return flowUploadBatch{}, nil, err
+			return flowUploadBatch{}, err
 		}
-		return flowUploadBatch{}, nil, nil
+		return flowUploadBatch{}, nil
 	}
 
 	batch := buildNftFlowUploadBatch(deltas, metas)
 	if missingForwardID, ok := firstNftBatchMissingDelta(deltas, batch); ok {
 		log.Printf("forward counter accounting skipped state advance op=unaccounted_delta node_id=%d forward_id=%d", nodeID, missingForwardID)
-		return flowUploadBatch{}, nil, fmt.Errorf("unaccounted counter delta for forward %d", missingForwardID)
+		return flowUploadBatch{}, fmt.Errorf("unaccounted counter delta for forward %d", missingForwardID)
 	}
-	quotaViews, err := h.repo.ApplyNftTrafficAccounting(batch.flowDeltas, batch.quotaUsage, newStates, now)
-	if err != nil {
+	if err := h.repo.ApplyNftTrafficAccounting(batch.flowDeltas, newStates, now); err != nil {
 		log.Printf("forward counter accounting failed op=accounting node_id=%d err=%v", nodeID, err)
-		return flowUploadBatch{}, nil, err
+		return flowUploadBatch{}, err
 	}
 	if err := h.recordTunnelMetricsFromForwardBatch(nodeID, batch.forwardTraffic, metas, nowMs); err != nil {
-		return flowUploadBatch{}, nil, err
+		return flowUploadBatch{}, err
 	}
-	return batch, quotaViews, nil
+	return batch, nil
 }
 
 func firstNftBatchMissingDelta(deltas []nftTrafficDelta, batch flowUploadBatch) (int64, bool) {
@@ -364,15 +361,15 @@ func buildNftCounterDeltas(nodeID int64, samples []runtimenft.CounterSample, old
 	return deltas, stateInputs
 }
 
+// buildNftFlowUploadBatch credits each forward with the bytes its counters
+// moved, both directions as they are.
 func buildNftFlowUploadBatch(deltas []nftTrafficDelta, metas map[int64]repo.FlowUploadForwardMeta) flowUploadBatch {
 	batch := flowUploadBatch{
-		quotaUsage:            make(map[int64]int64),
 		forwardTraffic:        make(map[int64]tunnelTrafficDelta),
 		orphanServices:        make(map[string]struct{}),
 		peerShareForwardItems: make(map[string]flowItem),
 		peerShareRuntimeItems: make(map[int64]flowItem),
 	}
-	policySeen := map[flowPolicyTarget]struct{}{}
 	flowSeen := map[int64]int{}
 
 	for _, delta := range deltas {
@@ -380,85 +377,26 @@ func buildNftFlowUploadBatch(deltas []nftTrafficDelta, metas map[int64]repo.Flow
 		if !exists {
 			continue
 		}
-
 		raw := batch.forwardTraffic[delta.ForwardID]
 		if delta.BytesIn < 0 || delta.BytesOut < 0 || raw.bytesIn > math.MaxInt64-delta.BytesIn || raw.bytesOut > math.MaxInt64-delta.BytesOut {
 			continue
 		}
-
-		scaledIn, ok := scaleNftTrafficBytes(delta.BytesIn, meta.TrafficRatio)
-		if !ok {
-			continue
-		}
-		var scaledOut int64
-		if meta.TunnelFlow != 1 {
-			scaledOut, ok = scaleNftTrafficBytes(delta.BytesOut, meta.TrafficRatio)
-			if !ok {
-				continue
-			}
-		}
-		if scaledIn > math.MaxInt64-scaledOut {
-			continue
-		}
-		quotaDelta := scaledIn + scaledOut
-		if batch.quotaUsage[meta.UserID] > math.MaxInt64-quotaDelta {
-			continue
-		}
-
-		flowIdx, flowExists := flowSeen[delta.ForwardID]
-		if flowExists && (batch.flowDeltas[flowIdx].InFlow > math.MaxInt64-scaledIn || batch.flowDeltas[flowIdx].OutFlow > math.MaxInt64-scaledOut) {
-			continue
-		}
-
 		raw.bytesIn += delta.BytesIn
 		raw.bytesOut += delta.BytesOut
 		batch.forwardTraffic[delta.ForwardID] = raw
 
-		if flowExists {
-			batch.flowDeltas[flowIdx].InFlow += scaledIn
-			batch.flowDeltas[flowIdx].OutFlow += scaledOut
+		if idx, ok := flowSeen[delta.ForwardID]; ok {
+			batch.flowDeltas[idx].InFlow += delta.BytesIn
+			batch.flowDeltas[idx].OutFlow += delta.BytesOut
 		} else {
 			flowSeen[delta.ForwardID] = len(batch.flowDeltas)
 			batch.flowDeltas = append(batch.flowDeltas, repo.FlowUploadCounterDelta{
-				ForwardID:    delta.ForwardID,
-				UserID:       meta.UserID,
-				UserTunnelID: meta.UserTunnelID,
-				InFlow:       scaledIn,
-				OutFlow:      scaledOut,
+				ForwardID: delta.ForwardID,
+				UserID:    meta.UserID,
+				InFlow:    delta.BytesIn,
+				OutFlow:   delta.BytesOut,
 			})
 		}
-		batch.quotaUsage[meta.UserID] += quotaDelta
-
-		target := flowPolicyTarget{UserID: meta.UserID, UserTunnelID: meta.UserTunnelID}
-		if _, seen := policySeen[target]; !seen {
-			policySeen[target] = struct{}{}
-			batch.policyTargets = append(batch.policyTargets, target)
-		}
 	}
-
-	sort.Slice(batch.policyTargets, func(i, j int) bool {
-		if batch.policyTargets[i].UserID == batch.policyTargets[j].UserID {
-			return batch.policyTargets[i].UserTunnelID < batch.policyTargets[j].UserTunnelID
-		}
-		return batch.policyTargets[i].UserID < batch.policyTargets[j].UserID
-	})
-
 	return batch
-}
-
-func scaleNftTrafficBytes(bytes int64, ratio float64) (int64, bool) {
-	if bytes < 0 || ratio < 0 {
-		return 0, false
-	}
-	var scaled int64
-	if ratio == 1 {
-		scaled = bytes
-	} else {
-		scaledFloat := float64(bytes) * ratio
-		if math.IsNaN(scaledFloat) || math.IsInf(scaledFloat, 0) || scaledFloat < 0 || scaledFloat >= math.Pow(2, 63) {
-			return 0, false
-		}
-		scaled = int64(scaledFloat)
-	}
-	return scaled, true
 }

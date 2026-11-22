@@ -75,8 +75,8 @@ func TestPasskeyRegistrationAndOwnership(t *testing.T) {
 	router, r := setupContractRouter(t, "passkey-test-secret")
 	seedLegacyUser(t, r, 9302, "passkey-alice", "alice-password")
 	seedLegacyUser(t, r, 9303, "passkey-bob", "bob-password")
-	aliceToken, _ := auth.GenerateToken(9302, "passkey-alice", 1, "passkey-test-secret")
-	bobToken, _ := auth.GenerateToken(9303, "passkey-bob", 1, "passkey-test-secret")
+	aliceToken, _ := auth.GenerateToken(9302, "passkey-alice", 0, "passkey-test-secret")
+	bobToken, _ := auth.GenerateToken(9303, "passkey-bob", 0, "passkey-test-secret")
 
 	if result := passkeyPost(t, router, "/api/v1/user/passkey/register/begin", "", map[string]string{"password": "alice-password"}); result.Code == 0 {
 		t.Fatal("unauthenticated registration was allowed")
@@ -150,7 +150,7 @@ func TestPasskeyDiscoverableLoginAndOwnership(t *testing.T) {
 	router, r := setupContractRouter(t, "passkey-test-secret")
 	seedLegacyUser(t, r, 9311, "discover-alice", "alice-password")
 	seedLegacyUser(t, r, 9312, "discover-bob", "bob-password")
-	aliceToken, _ := auth.GenerateToken(9311, "discover-alice", 1, "passkey-test-secret")
+	aliceToken, _ := auth.GenerateToken(9311, "discover-alice", 0, "passkey-test-secret")
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)

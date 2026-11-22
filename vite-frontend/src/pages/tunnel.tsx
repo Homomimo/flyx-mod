@@ -61,11 +61,7 @@ import {
   type DiagnosisResult,
 } from "@/pages/tunnel/diagnosis";
 import { diagnoseTunnelStream } from "@/api/diagnosis-stream";
-import {
-  getTunnelFlowDisplay,
-  getTunnelTypeDisplay,
-  validateTunnelForm,
-} from "@/pages/tunnel/form";
+import { getTunnelTypeDisplay, validateTunnelForm } from "@/pages/tunnel/form";
 import { useLocalStorageState } from "@/hooks/use-local-storage-state";
 import { loadStoredOrder, saveOrder } from "@/utils/order-storage";
 import {
@@ -1416,7 +1412,12 @@ export default function TunnelPage({
     };
 
     return (
-      <div ref={setNodeRef} style={style} {...attributes}>
+      <div
+        ref={setNodeRef}
+        className="list-row-wrap"
+        style={style}
+        {...attributes}
+      >
         {children(listeners)}
       </div>
     );
@@ -1585,10 +1586,7 @@ export default function TunnelPage({
                             )}
                           </>
                         }
-                        meta={[
-                          describeRoute(tunnel),
-                          `${tunnel.trafficRatio}x`,
-                        ].join(" · ")}
+                        meta={describeRoute(tunnel)}
                         right={
                           !isSearching && (
                             <span
@@ -1668,8 +1666,6 @@ export default function TunnelPage({
                       ["出口", listNodes(sheetTunnel.outNodeId)],
                     ] as Array<[string, string]>)
                   : []),
-                ["流量计算", getTunnelFlowDisplay(sheetTunnel.flow)],
-                ["流量倍率", `${sheetTunnel.trafficRatio}x`],
                 ...(sheetTunnel.type === 2 && sheetTunnel.ipPreference
                   ? ([
                       [

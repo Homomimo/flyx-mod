@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go-backend/internal/store/model"
 	"go-backend/internal/store/repo"
 	"log"
 	"net/http"
@@ -64,25 +63,20 @@ func (h *Handler) serveFlowUpload(w http.ResponseWriter, r *http.Request, reliab
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]any{"stream": envelope.Stream, "sequence": envelope.Sequence, "error": reason})
 	}
-	if validateFlowUploadItems(envelope.Items, nil) != nil {
+	if validateFlowUploadItems(envelope.Items) != nil {
 		reject(http.StatusBadRequest, "invalid_batch")
 		return
 	}
 	now := time.Now()
 	var batch flowUploadBatch
-	var quotas map[int64]*model.UserQuotaView
 	apply := func(tx *repo.Repository) error {
 		local := &Handler{repo: tx}
 		metas, err := tx.GetFlowUploadForwardMetas(collectFlowUploadForwardIDs(envelope.Items))
 		if err != nil {
 			return err
 		}
-		if err := validateFlowUploadItems(envelope.Items, metas); err != nil {
-			return fmt.Errorf("%w: %v", errInvalidTraffic, err)
-		}
 		batch = local.buildNodeFlowUploadBatch(node.ID, envelope.Items, metas)
-		quotas, err = local.commitFlowUploadBatch(node.ID, &batch, now)
-		if err != nil {
+		if err := local.commitFlowUploadBatch(node.ID, &batch, now); err != nil {
 			return err
 		}
 		return local.recordTunnelMetricsFromForwardBatch(node.ID, batch.forwardTraffic, metas, now.UnixMilli())
@@ -124,6 +118,6 @@ func (h *Handler) serveFlowUpload(w http.ResponseWriter, r *http.Request, reliab
 		flusher.Flush()
 	}
 	if applied {
-		h.enforceFlowUploadBatch(node.ID, batch, quotas)
+		h.enforceFlowUploadBatch(node.ID, batch)
 	}
 }

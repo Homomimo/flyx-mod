@@ -2,32 +2,18 @@ import type {
   BatchOperationResult,
   ForwardDiagnosisApiData,
   ForwardApiItem,
-  GroupPermissionApiItem,
   NodeReleaseApiItem,
   NodeApiItem,
-  SpeedLimitApiItem,
   TunnelBatchDeletePreviewApiData,
   TunnelBatchDeleteWithForwardsApiData,
   TunnelDeletePreviewApiData,
   TunnelDeleteWithForwardsApiData,
   TunnelDiagnosisApiData,
-  TunnelGroupApiItem,
-  UserApiItem,
-  UserGroupApiItem,
-  UserListQuery,
-  UserPackageInfoApiData,
-  UserTunnelPermissionApiItem,
   TunnelApiItem,
   UserTunnelApiItem,
-  UserMutationPayload,
   NodeMutationPayload,
   TunnelMutationPayload,
-  UserQuotaResetPayload,
-  UserTunnelAssignPayload,
-  UserTunnelListQuery,
-  UserTunnelRemovePayload,
   ForwardMutationPayload,
-  SpeedLimitMutationPayload,
   UpdatePasswordPayload,
   BackupImportPayload,
   NodeMetricApiItem,
@@ -38,8 +24,6 @@ import type {
   ServiceMonitorMutationPayload,
   MonitorNodeApiItem,
   MonitorTunnelApiItem,
-  MonitorPermissionApiItem,
-  MonitorAccessApiData,
   TunnelQualityApiItem,
   StorageSummaryApiData,
   SystemUpgradeCheckApiData,
@@ -63,6 +47,9 @@ import type {
 import axios from "axios";
 
 import Network from "./network";
+import { extractApiErrorMessage } from "./error-message";
+
+import { getToken } from "@/utils/session";
 
 export type ReleaseChannel = "stable" | "dev";
 
@@ -128,6 +115,11 @@ export interface GithubInfo {
   createdAt?: number;
 }
 
+/** Which ways in the login page offers; no login needed. */
+export const getLoginMethods = () =>
+  Network.post<{ password: boolean; github: boolean; passkey: boolean }>(
+    "/user/login/methods",
+  );
 export const getGithubStatus = () =>
   Network.post<{ enabled: boolean }>("/user/github/status");
 export const beginGithubLogin = (redirectUri: string) =>
@@ -146,29 +138,25 @@ export const finishGithubBind = (code: string, state: string) =>
 export const unbindGithub = (password: string) =>
   Network.post("/user/github/unbind", { password });
 
-// 用户CRUD操作 - 全部使用POST请求
-export const createUser = (data: UserMutationPayload) =>
-  Network.post("/user/create", data);
-export const getAllUsers = (pageData: UserListQuery = {}) =>
-  Network.post<UserApiItem[]>("/user/list", pageData);
-export const updateUser = (data: UserMutationPayload) =>
-  Network.post("/user/update", data);
-export const deleteUser = (id: number) =>
-  Network.post<{ warnings?: string[] }>("/user/delete", { id });
-export const getUserPackageInfo = () =>
-  Network.post<UserPackageInfoApiData>("/user/package");
-
 // 节点CRUD操作 - 全部使用POST请求
 export const createNode = (data: NodeMutationPayload) =>
   Network.post("/node/create", data);
 export const getNodeList = () => Network.post<NodeApiItem[]>("/node/list");
-/** Each node's traffic since the 1st of this month (viewer's time zone): id → [in, out]. */
+/** Each node's traffic in its current period (from its reset day, panel time zone), corrected: id → [in, out]. */
 export const getNodeMonthTraffic = () =>
   Network.post<Record<string, [number, number]>>("/node/traffic/month", {
     tzOffset: -new Date().getTimezoneOffset(),
   });
 export const getDashboardNodeExpiryList = () =>
   Network.post<NodeApiItem[]>("/node/list", {});
+/** Only a server's price and renewal (the 价格与到期 dialog). */
+export const updateNodeBilling = (data: {
+  id: number;
+  price: number;
+  currency: string;
+  renewalCycle: string;
+  expiryTime: number;
+}) => Network.post("/node/billing", data);
 export const updateNode = (data: NodeMutationPayload) =>
   Network.post("/node/update", data);
 /** Outcome of uninstalling the agent while deleting a server. */
@@ -388,19 +376,10 @@ export const updateTunnelOrder = (data: {
   tunnels: Array<{ id: number; inx: number }>;
 }) => Network.post("/tunnel/update-order", data);
 
-// 用户隧道权限管理操作 - 全部使用POST请求
-export const assignUserTunnel = (data: UserTunnelAssignPayload) =>
-  Network.post("/tunnel/user/assign", data);
 export const batchAssignUserTunnel = (data: {
   userId: number;
   tunnels: Array<{ tunnelId: number; speedId?: number | null }>;
 }) => Network.post("/tunnel/user/batch-assign", data);
-export const getUserTunnelList = (queryData: UserTunnelListQuery = {}) =>
-  Network.post<UserTunnelPermissionApiItem[]>("/tunnel/user/list", queryData);
-export const removeUserTunnel = (params: UserTunnelRemovePayload) =>
-  Network.post("/tunnel/user/remove", params);
-export const updateUserTunnel = (data: UserTunnelAssignPayload) =>
-  Network.post("/tunnel/user/update", data);
 export const userTunnel = () =>
   Network.post<UserTunnelApiItem[]>("/tunnel/user/tunnel");
 
@@ -437,16 +416,6 @@ export const updateForwardOrder = (data: {
   forwards: Array<{ id: number; inx: number }>;
 }) => Network.post("/forward/update-order", data);
 
-// 限速规则CRUD操作 - 全部使用POST请求
-export const createSpeedLimit = (data: SpeedLimitMutationPayload) =>
-  Network.post("/speed-limit/create", data);
-export const getSpeedLimitList = () =>
-  Network.post<SpeedLimitApiItem[]>("/speed-limit/list");
-export const updateSpeedLimit = (data: SpeedLimitMutationPayload) =>
-  Network.post("/speed-limit/update", data);
-export const deleteSpeedLimit = (id: number) =>
-  Network.post("/speed-limit/delete", { id });
-
 // 修改密码接口
 export const updatePassword = (data: UpdatePasswordPayload) =>
   Network.post("/user/updatePassword", data);
@@ -454,11 +423,6 @@ export const updatePassword = (data: UpdatePasswordPayload) =>
 // 重置流量接口
 export const resetUserFlow = (data: { id: number; type: number }) =>
   Network.post("/user/reset", data);
-export const resetUserQuota = (data: UserQuotaResetPayload) =>
-  Network.post("/user/quota/reset", data);
-
-export const getUserGroups = (id: number) =>
-  Network.post<number[]>("/user/groups", { id });
 
 // 网站配置相关接口
 export const getConfigs = () =>
@@ -565,48 +529,6 @@ export const batchChangeTunnel = (data: {
   targetTunnelId: number;
 }) => Network.post<BatchOperationResult>("/forward/batch-change-tunnel", data);
 
-// 分组与权限分配接口
-export const getTunnelGroupList = () =>
-  Network.post<TunnelGroupApiItem[]>("/group/tunnel/list");
-export const createTunnelGroup = (data: { name: string; status?: number }) =>
-  Network.post("/group/tunnel/create", data);
-export const updateTunnelGroup = (data: {
-  id: number;
-  name: string;
-  status?: number;
-}) => Network.post("/group/tunnel/update", data);
-export const deleteTunnelGroup = (id: number) =>
-  Network.post("/group/tunnel/delete", { id });
-export const assignTunnelsToGroup = (data: {
-  groupId: number;
-  tunnelIds: number[];
-}) => Network.post("/group/tunnel/assign", data);
-
-export const getUserGroupList = () =>
-  Network.post<UserGroupApiItem[]>("/group/user/list");
-export const createUserGroup = (data: { name: string; status?: number }) =>
-  Network.post("/group/user/create", data);
-export const updateUserGroup = (data: {
-  id: number;
-  name: string;
-  status?: number;
-}) => Network.post("/group/user/update", data);
-export const deleteUserGroup = (id: number) =>
-  Network.post("/group/user/delete", { id });
-export const assignUsersToGroup = (data: {
-  groupId: number;
-  userIds: number[];
-}) => Network.post("/group/user/assign", data);
-
-export const getGroupPermissionList = () =>
-  Network.post<GroupPermissionApiItem[]>("/group/permission/list");
-export const assignGroupPermission = (data: {
-  userGroupId: number;
-  tunnelGroupId: number;
-}) => Network.post("/group/permission/assign", data);
-export const removeGroupPermission = (id: number) =>
-  Network.post("/group/permission/remove", { id });
-
 // 面板共享 (Federation) 接口
 export const getPeerShareList = () =>
   Network.post<Array<Record<string, unknown>>>("/federation/share/list");
@@ -692,14 +614,6 @@ export interface AnnouncementData {
   enabled: number;
   update_time?: number;
 }
-
-export const getAnnouncement = () =>
-  Network.get<AnnouncementData>("/announcement/get");
-export const updateAnnouncement = ({
-  content,
-  enabled,
-}: Pick<AnnouncementData, "content" | "enabled">) =>
-  Network.post("/announcement/update", { content, enabled });
 
 export const getNodeMetrics = (
   nodeId: number,
@@ -804,18 +718,6 @@ export const runServiceMonitor = (id: number) =>
 export const getMonitorNodes = () =>
   Network.get<MonitorNodeApiItem[]>("/monitor/nodes");
 
-export const getMonitorAccess = () =>
-  Network.get<MonitorAccessApiData>("/monitor/access");
-
-export const getMonitorPermissionList = () =>
-  Network.get<MonitorPermissionApiItem[]>("/monitor/permission/list");
-
-export const assignMonitorPermission = (userId: number) =>
-  Network.post("/monitor/permission/assign", { userId });
-
-export const removeMonitorPermission = (userId: number) =>
-  Network.post("/monitor/permission/remove", { userId });
-
 // 代理内核 / 入站（节点服务）
 export const getKernelCapabilities = () =>
   Network.post<KernelCapabilitiesApiData>("/kernel/capabilities");
@@ -864,6 +766,7 @@ export interface SubPipeline {
   prefix: string;
   dedupe: boolean;
   sort: "" | "name";
+  nodeOrder?: string[];
   regionGroups: boolean;
   /** Client-side chain: names matching chainLanding dial through the relay group. */
   chainLanding: string;
@@ -1070,6 +973,7 @@ export interface SubscriptionDraft {
   resetDay: number;
 }
 export interface SubPreviewItem {
+  orderKey?: string;
   name: string;
   original: string;
   region: string;
@@ -1091,6 +995,8 @@ export const saveSubscription = (data: SubscriptionDraft) =>
   Network.post<SubscriptionItem>("/subscription/save", data);
 export const deleteSubscription = (id: number) =>
   Network.post("/subscription/delete", { id });
+export const orderSubscriptions = (ids: number[]) =>
+  Network.post("/subscription/order", { ids });
 export const resetSubscription = (id: number) =>
   Network.post<SubscriptionItem>("/subscription/reset", { id });
 /** A subscription as the user it is assigned to sees it. */
@@ -1116,12 +1022,6 @@ export interface UserSubscription {
   /** Clients rendered from a template (Shadowrocket then imports a full config). */
   templates?: string[];
 }
-/** The subscriptions assigned to the logged-in user. */
-export const getMySubscriptions = () =>
-  Network.post<UserSubscription[]>("/user/subscription/list");
-/** Gives one of the user's subscriptions a new link and credentials. */
-export const resetMySubscription = (id: number) =>
-  Network.post<UserSubscription>("/user/subscription/reset", { id });
 export type SubTrafficRange = "hour" | "day" | "month";
 /** A subscription's traffic: 24 hours, 30 days or 12 months in the viewer's time zone. */
 export interface SubTraffic {
@@ -1143,12 +1043,6 @@ const trafficQuery = (id: number, range: SubTrafficRange) => ({
 
 export const getSubscriptionTraffic = (id: number, range: SubTrafficRange) =>
   Network.post<SubTraffic>("/subscription/traffic", trafficQuery(id, range));
-/** The same for one of the logged-in user's subscriptions. */
-export const getMySubscriptionTraffic = (id: number, range: SubTrafficRange) =>
-  Network.post<SubTraffic>(
-    "/user/subscription/traffic",
-    trafficQuery(id, range),
-  );
 /** What a source's nodes are for in a chain: plain nodes, relays (前置) or landing nodes. */
 export type RemoteSourceRole = "" | "relay" | "landing";
 export interface RemoteSourceItem {
@@ -1191,6 +1085,7 @@ export const saveRemoteSource = (data: {
   relayOnly: boolean;
   enabled?: boolean;
   userAgent?: string;
+  nodeOrder?: number[];
 }) =>
   Network.post<
     RemoteSourceItem | { source: RemoteSourceItem; result: RemoteSyncResult }
@@ -1325,6 +1220,7 @@ export const updateInboundSplit = (data: {
   id: number;
   outboundId: number;
   splitRules: SplitRule[];
+  defaultBlock?: boolean;
   outboundIpStrategy?:
     | "auto"
     | "ipv4_only"
@@ -1390,3 +1286,224 @@ export const updateInboundRelay = (data: {
 }) => Network.post("/inbound/relay/update", data);
 export const deleteInboundRelay = (id: number, force = false) =>
   Network.post("/inbound/relay/delete", { id, force });
+
+// ---- public status page (no login) ----
+export interface PublicStatusAvailability {
+  h24: number | null;
+  d30: number | null;
+  days: Array<number | null>;
+  down: Array<number | null>;
+}
+
+export interface PublicStatusNode {
+  id: number;
+  name: string;
+  online: boolean;
+  availability: PublicStatusAvailability;
+  cpu?: number;
+  mem?: number;
+  disk?: number;
+  load?: [number, number, number];
+  speedUp?: number;
+  speedDown?: number;
+  uptime?: number;
+  tcp?: number;
+  udp?: number;
+  /** Capacity, from agents that report it. */
+  cores?: number;
+  memUsed?: number;
+  memTotal?: number;
+  diskUsed?: number;
+  diskTotal?: number;
+  /** The admin's group ("" or absent = none) and the public note. */
+  group?: string;
+  note?: string;
+  /** Price per cycle ("month", "quarter", "year", "6m", "2y"), when shown. */
+  price?: number;
+  currency?: string;
+  cycle?: string;
+  /** Monthly traffic quota and what counts against it, in bytes. */
+  quota?: number;
+  quotaUsed?: number;
+  periodStart?: number;
+  monthUp?: number;
+  monthDown?: number;
+  expiry?: string;
+  /** 国家代码（HK、JP…）：管理员选的，否则按服务器地址识别；没有时不出现。 */
+  region?: string;
+  ping?: PublicStatusPing[];
+  // From agents of 3.9.0 on.
+  swap?: number;
+  swapUsed?: number;
+  swapTotal?: number;
+  procs?: number;
+  // Only while the admin shows system information.
+  os?: string;
+  arch?: string;
+  virtualization?: string;
+  cpuName?: string;
+}
+
+/** GET /public/status/history?node=&range= (node is PublicStatusNode.id). */
+export type PublicStatusRange = "1h" | "6h" | "24h" | "7d";
+
+export interface PublicStatusMetricPoint {
+  t: number;
+  cpu: number;
+  mem: number;
+  swap: number;
+  disk: number;
+  load: number;
+  tcp: number;
+  udp: number;
+  procs: number;
+  /** Absent while the page hides traffic. */
+  netIn?: number;
+  netOut?: number;
+}
+
+export interface PublicStatusMetricHistory {
+  range: PublicStatusRange;
+  bucketSec: number;
+  points: PublicStatusMetricPoint[];
+}
+
+/** GET /public/status/ping-history?node=&range= */
+export interface PublicStatusPingHistory {
+  range: PublicStatusRange;
+  bucketSec: number;
+  points: Array<{
+    name: string;
+    samples: Array<{ t: number; ms: number | null; loss: number }>;
+  }>;
+}
+
+export interface PublicStatusPing {
+  name: string;
+  /** Latest round, null when it failed. */
+  ms: number | null;
+  /** Average loss over the hour, percent. */
+  loss: number;
+  /** The hour's rounds, oldest first; -1 = failed. */
+  samples: number[];
+  /** Return route line ("CN2 GIA", "9929"…), once traced. */
+  route?: string;
+  /** A dual-stack node's IPv6 line, when it differs. */
+  routeV6?: string;
+}
+
+export interface PublicStatus {
+  title: string;
+  timezone: string;
+  generatedAt: number;
+  days: string[];
+  showTraffic: boolean;
+  /** How the page groups servers: the admin's groups or regions. */
+  groupBy?: "group" | "region";
+  nodes: PublicStatusNode[];
+  totals: {
+    nodes: number;
+    online: number;
+    speedUp: number;
+    speedDown: number;
+    monthUp: number;
+    monthDown: number;
+    d30: number | null;
+  };
+}
+
+export const getPublicStatus = () =>
+  Network.get<PublicStatus>("/public/status");
+
+// ---------------------------------------------------------------- status page themes
+
+/** A status page theme as the panel lists it (theme.json plus state). */
+export interface StatusTheme {
+  name: string;
+  short: string;
+  description: string;
+  version: string;
+  author: string;
+  url: string;
+  flyxApi: number;
+  /** The settings form declared in theme.json, passed through unparsed. */
+  config?: unknown;
+  selected: boolean;
+  builtin: boolean;
+  preview: boolean;
+}
+
+export interface StatusThemeList {
+  themes: StatusTheme[];
+  apiVersion: number;
+}
+
+// Installing from GitHub downloads the package: allow for a slow link.
+const THEME_FETCH_TIMEOUT = 150_000;
+
+export const listStatusThemes = () =>
+  Network.post<StatusThemeList>("/status-theme/list");
+export const selectStatusTheme = (short: string) =>
+  Network.post<null>("/status-theme/select", { short });
+export const deleteStatusTheme = (short: string) =>
+  Network.post<null>("/status-theme/delete", { short });
+export const installStatusTheme = (url: string) =>
+  Network.post<StatusTheme>(
+    "/status-theme/install",
+    { url },
+    { timeout: THEME_FETCH_TIMEOUT },
+  );
+export const updateStatusTheme = (short: string) =>
+  Network.post<{ updated: boolean; version: string; theme: StatusTheme }>(
+    "/status-theme/update",
+    { short },
+    { timeout: THEME_FETCH_TIMEOUT },
+  );
+
+export const getStatusThemeConfig = (short: string) =>
+  Network.post<{ theme: string; values: unknown }>("/status-theme/config/get", {
+    short,
+  });
+export const saveStatusThemeConfig = (
+  short: string,
+  values: Record<string, unknown>,
+) => Network.post<null>("/status-theme/config/save", { short, values });
+
+/** Uploads a theme.tar.gz (multipart, so not through Network.post). */
+export async function uploadStatusTheme(
+  file: File,
+): Promise<{ code: number; msg: string; data: StatusTheme | null }> {
+  const form = new FormData();
+
+  form.append("file", file);
+  try {
+    const res = await axios.post("/status-theme/upload", form, {
+      timeout: THEME_FETCH_TIMEOUT,
+      headers: { Authorization: getToken() ?? "" },
+    });
+
+    return res.data;
+  } catch (error) {
+    return { code: -1, msg: extractApiErrorMessage(error), data: null };
+  }
+}
+
+/** A theme's thumbnail as an object URL (the endpoint needs the token). */
+export async function fetchStatusThemePreview(
+  short: string,
+): Promise<string | null> {
+  try {
+    const res = await axios.get<Blob>("/status-theme/preview", {
+      params: { short },
+      responseType: "blob",
+      timeout: 30_000,
+      headers: { Authorization: getToken() ?? "" },
+    });
+
+    return res.data.type.startsWith("image/")
+      ? URL.createObjectURL(res.data)
+      : null;
+  } catch {
+    return null;
+  }
+}

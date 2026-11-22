@@ -1,7 +1,6 @@
 package repo
 
 import (
-	"database/sql"
 	"errors"
 
 	"gorm.io/gorm"
@@ -87,38 +86,10 @@ func (r *Repository) UpsertConfigs(values map[string]string, now int64) error {
 	})
 }
 
-// ─── Announcement Queries ────────────────────────────────────────────
-
-func (r *Repository) GetAnnouncement() (*model.Announcement, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var ann model.Announcement
-	err := r.db.Order("id DESC").First(&ann).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &ann, nil
-}
-
-func (r *Repository) UpsertAnnouncement(content string, enabled int, now int64) error {
+// DeleteConfigByName removes a config entry; a missing one is not an error.
+func (r *Repository) DeleteConfigByName(name string) error {
 	if r == nil || r.db == nil {
 		return errors.New("repository not initialized")
 	}
-	var count int64
-	if err := r.db.Model(&model.Announcement{}).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return r.db.Create(&model.Announcement{
-			Content: content, Enabled: enabled,
-			CreatedTime: now, UpdatedTime: sql.NullInt64{Int64: now, Valid: true},
-		}).Error
-	}
-	return r.db.Model(&model.Announcement{}).Where("1=1").Updates(map[string]interface{}{
-		"content": content, "enabled": enabled, "updated_time": now,
-	}).Error
+	return r.db.Where("name = ?", name).Delete(&model.ViteConfig{}).Error
 }

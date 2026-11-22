@@ -18,15 +18,10 @@ export interface Forward {
   outFlow: number;
   serviceRunning: boolean;
   federationShareFlow?: number;
-  maxConn?: number;
   createdTime: string;
   userName?: string;
   userId?: number;
   inx?: number;
-  speedId?: number | null;
-  ipMaxConn?: number;
-  ipSpeedId?: number | null;
-  ipSpeedLimitName?: string;
   proxyProtocol?: number;
   proxyProtocolReceive?: number;
   proxyProtocolSend?: number;
@@ -68,10 +63,6 @@ export interface ForwardForm {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
-  speedId: number | null;
-  ipMaxConn?: number;
-  ipSpeedId: number | null;
-  maxConn?: number;
   proxyProtocol?: number;
   proxyProtocolReceive?: number;
   proxyProtocolSend?: number;

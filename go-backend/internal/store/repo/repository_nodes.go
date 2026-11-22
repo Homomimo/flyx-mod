@@ -130,6 +130,20 @@ func (r *Repository) ListNodes() ([]map[string]interface{}, error) {
 			"latencyTargets":          n.LatencyTargets,
 			"notifyEvents":            n.NotifyEvents,
 			"nftError":                n.NftError,
+			"hostOs":                  n.HostOS,
+			"hostKernel":              n.HostKernel,
+			"hostArch":                n.HostArch,
+			"hostCpuName":             n.HostCPUName,
+			"hostVirtualization":      n.HostVirtualization,
+			"region":                  n.Region,
+			"regionDetected":          n.RegionDetected,
+			"group":                   n.GroupName,
+			"publicNote":              n.PublicNote,
+			"price":                   n.Price,
+			"currency":                n.Currency,
+			"trafficQuotaGb":          n.TrafficQuotaGB,
+			"trafficCalc":             n.TrafficCalc,
+			"trafficResetDay":         n.TrafficResetDay,
 		})
 	}
 	return items, nil

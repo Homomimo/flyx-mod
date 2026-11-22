@@ -24,36 +24,6 @@ def authenticated_api(api_client: APIClient) -> APIClient:
 
 
 @pytest.fixture
-def test_user(authenticated_api: APIClient) -> Generator[TestUser, None, None]:
-    """Create a test user for the test."""
-    user = TestUser.create_test_user(authenticated_api)
-    yield user
-    user.cleanup()
-
-
-@pytest.fixture
-def clean_users(authenticated_api: APIClient) -> Generator[Callable[..., dict], None, None]:
-    """Clean up test users after test."""
-    created_ids: list[int] = []
-
-    def _create_user(username: str, password: str = "test123", **kwargs: Any) -> dict:
-        response = authenticated_api.create_user(username, password, **kwargs)
-        if response.get("code") == 0:
-            user_id = response.get("data", {}).get("id")
-            if user_id:
-                created_ids.append(user_id)
-        return response
-
-    yield _create_user
-
-    for user_id in created_ids:
-        try:
-            authenticated_api.delete_user(user_id)
-        except Exception:
-            pass
-
-
-@pytest.fixture
 def clean_nodes(authenticated_api: APIClient) -> Generator[Callable[..., dict], None, None]:
     """Clean up test nodes after test."""
     created_ids: list[int] = []

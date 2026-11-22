@@ -24,6 +24,7 @@ export default defineConfig({
           { text: "快速上手", link: "/guide/getting-started" },
           { text: "安装面板", link: "/guide/install" },
           { text: "安装 agent", link: "/guide/agent" },
+          { text: "服务器设置", link: "/guide/servers" },
           { text: "升级", link: "/guide/upgrade" },
         ],
       },
@@ -41,7 +42,7 @@ export default defineConfig({
         text: "中转与转发",
         items: [
           { text: "对接中转", link: "/guide/relay" },
-          { text: "转发规则与用户", link: "/guide/forward" },
+          { text: "隧道与转发规则", link: "/guide/forward" },
         ],
       },
       {
@@ -59,6 +60,8 @@ export default defineConfig({
         text: "运维",
         items: [
           { text: "通知", link: "/guide/notify" },
+          { text: "状态页", link: "/guide/status-page" },
+          { text: "状态页主题开发", link: "/guide/status-theme-dev" },
           { text: "备份与恢复", link: "/guide/backup" },
           { text: "PostgreSQL", link: "/guide/postgresql" },
           { text: "通行证密钥登录", link: "/guide/passkey" },

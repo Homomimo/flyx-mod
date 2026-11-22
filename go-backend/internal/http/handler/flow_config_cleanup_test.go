@@ -62,7 +62,7 @@ func TestConfigCleanupProtectsPendingSharedDependencies(t *testing.T) {
 }
 
 func TestConfigCleanupPreservesDependenciesOnLookupFailure(t *testing.T) {
-	for _, table := range []string{"peer_share_runtime", "tunnel", "speed_limit", "forward"} {
+	for _, table := range []string{"peer_share_runtime", "tunnel"} {
 		t.Run(table, func(t *testing.T) {
 			a := newCleanupAgent(t)
 			callback := "test:config-cleanup-query-failure"
@@ -79,8 +79,6 @@ func TestConfigCleanupPreservesDependenciesOnLookupFailure(t *testing.T) {
 			configs := map[string]string{
 				"peer_share_runtime": `{"chains":[{"name":"chains_88"}],"limiters":[{"name":"13"}]}`,
 				"tunnel":             `{"chains":[{"name":"chains_88"}]}`,
-				"speed_limit":        `{"limiters":[{"name":"13"}]}`,
-				"forward":            `{"limiters":[{"name":"rule_traffic_limit_70"}]}`,
 			}
 			a.h.cleanNodeConfigs(1, configs[table])
 			a.probe(t)

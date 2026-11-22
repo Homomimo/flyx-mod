@@ -118,7 +118,7 @@ export function ResetFlowModal({
                 当前显示的上传和下载流量吗？
               </p>
               <p className="text-small text-default-500 mt-2">
-                此操作不可撤销，但不会影响用户总流量、用户隧道配额和历史统计。
+                此操作不可撤销，只清零这条规则显示的流量。
               </p>
             </ModalBody>
             <ModalFooter>

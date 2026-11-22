@@ -1,7 +1,6 @@
 package repo
 
 import (
-	"database/sql"
 	"errors"
 	"go-backend/internal/store/model"
 )
@@ -50,136 +49,7 @@ func (r *Repository) ListGroupPermissionPairsByUserGroup(userGroupID int64) ([][
 	return result, err
 }
 
-func (r *Repository) GetUserGroupIDsByUserID(userID int64) ([]int64, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var ids []int64
-	err := r.db.Model(&model.UserGroupUser{}).
-		Where("user_id = ?", userID).
-		Pluck("user_group_id", &ids).Error
-	return ids, err
-}
-
-func (r *Repository) ListGroupPermissionPairsByTunnelGroup(tunnelGroupID int64) ([][2]int64, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var perms []model.GroupPermission
-	err := r.db.Where("tunnel_group_id = ?", tunnelGroupID).Find(&perms).Error
-	if err != nil {
-		return nil, err
-	}
-	result := make([][2]int64, len(perms))
-	for i, p := range perms {
-		result[i] = [2]int64{p.UserGroupID, p.TunnelGroupID}
-	}
-	return result, err
-}
-
-func (r *Repository) ListSpeedLimits() ([]map[string]interface{}, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var limits []model.SpeedLimit
-	if err := r.db.Order("id DESC").Find(&limits).Error; err != nil {
-		return nil, err
-	}
-	items := make([]map[string]interface{}, 0, len(limits))
-	for _, sl := range limits {
-		item := map[string]interface{}{
-			"id": sl.ID, "name": sl.Name, "speed": sl.Speed,
-			"status": sl.Status, "createdTime": sl.CreatedTime,
-			"updatedTime": nullableInt64(sl.UpdatedTime),
-		}
-		items = append(items, item)
-	}
-	return items, nil
-}
-
 // ─── Group Queries ───────────────────────────────────────────────────
-
-func (r *Repository) ListTunnelGroups() ([]map[string]interface{}, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var groups []model.TunnelGroup
-	if err := r.db.Order("id ASC").Find(&groups).Error; err != nil {
-		return nil, err
-	}
-	result := make([]map[string]interface{}, 0, len(groups))
-	for _, g := range groups {
-		ids, names, err := r.listTunnelGroupMembers(g.ID)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, map[string]interface{}{
-			"id": g.ID, "name": g.Name, "status": g.Status,
-			"tunnelIds": ids, "tunnelNames": names,
-			"createdTime": g.CreatedTime,
-		})
-	}
-	return result, nil
-}
-
-func (r *Repository) ListUserGroups() ([]map[string]interface{}, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var groups []model.UserGroup
-	if err := r.db.Order("id ASC").Find(&groups).Error; err != nil {
-		return nil, err
-	}
-	result := make([]map[string]interface{}, 0, len(groups))
-	for _, g := range groups {
-		ids, names, err := r.listUserGroupMembers(g.ID)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, map[string]interface{}{
-			"id": g.ID, "name": g.Name, "status": g.Status,
-			"userIds": ids, "userNames": names,
-			"createdTime": g.CreatedTime,
-		})
-	}
-	return result, nil
-}
-
-func (r *Repository) ListGroupPermissions() ([]map[string]interface{}, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-
-	type permRow struct {
-		ID              int64
-		UserGroupID     int64
-		UserGroupName   sql.NullString
-		TunnelGroupID   int64
-		TunnelGroupName sql.NullString
-		CreatedTime     int64
-	}
-	var rows []permRow
-	err := r.db.Model(&model.GroupPermission{}).
-		Select("group_permission.id, group_permission.user_group_id, user_group.name AS user_group_name, group_permission.tunnel_group_id, tunnel_group.name AS tunnel_group_name, group_permission.created_time").
-		Joins("LEFT JOIN user_group ON user_group.id = group_permission.user_group_id").
-		Joins("LEFT JOIN tunnel_group ON tunnel_group.id = group_permission.tunnel_group_id").
-		Order("group_permission.id ASC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	result := make([]map[string]interface{}, 0, len(rows))
-	for _, r := range rows {
-		result = append(result, map[string]interface{}{
-			"id": r.ID, "userGroupId": r.UserGroupID,
-			"userGroupName":   nullableString(r.UserGroupName),
-			"tunnelGroupId":   r.TunnelGroupID,
-			"tunnelGroupName": nullableString(r.TunnelGroupName),
-			"createdTime":     r.CreatedTime,
-		})
-	}
-	return result, nil
-}
 
 func (r *Repository) listTunnelGroupMembers(groupID int64) ([]int64, []string, error) {
 	type row struct {

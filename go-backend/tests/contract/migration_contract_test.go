@@ -308,56 +308,11 @@ func TestDisabledLegacyPasswordIsRejectedOnSubStoreWithoutMigration(t *testing.T
 	}
 }
 
-func TestUserCreateStoresStrongHash(t *testing.T) {
-	router, r := setupContractRouter(t, "contract-jwt-secret")
-	startedAt := time.Now().UnixMilli()
-	adminToken, err := auth.GenerateToken(1, "admin_user", 0, "contract-jwt-secret")
-	if err != nil {
-		t.Fatalf("generate token: %v", err)
-	}
-
-	body := bytes.NewBufferString(`{"user":"created-user","pwd":"created-pass"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/user/create", body)
-	req.Header.Set("Authorization", adminToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-	assertCode(t, resp, 0)
-	assertUserPasswordIsBcrypt(t, r, "created-user", "created-pass")
-	if changedAt := mustQueryPasswordChangedAtByUsername(t, r, "created-user"); changedAt < startedAt {
-		t.Fatalf("expected password_changed_at to be set on create, got %d < %d", changedAt, startedAt)
-	}
-}
-
-func TestUserUpdateStoresStrongHash(t *testing.T) {
-	router, r := setupContractRouter(t, "contract-jwt-secret")
-	seedLegacyUser(t, r, 9103, "legacy-update-user", "legacy-update-pass")
-	startedAt := time.Now().UnixMilli()
-	adminToken, err := auth.GenerateToken(1, "admin_user", 0, "contract-jwt-secret")
-	if err != nil {
-		t.Fatalf("generate token: %v", err)
-	}
-
-	body := bytes.NewBufferString(`{"id":9103,"user":"updated-user","pwd":"updated-pass","flow":99999,"num":99999,"expTime":2727251700000,"flowResetTime":1,"status":1,"maxConn":0}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/user/update", body)
-	req.Header.Set("Authorization", adminToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-	assertCode(t, resp, 0)
-	assertUserPasswordIsBcrypt(t, r, "updated-user", "updated-pass")
-	if changedAt := mustQueryPasswordChangedAtByUsername(t, r, "updated-user"); changedAt < startedAt {
-		t.Fatalf("expected password_changed_at to be updated on user update, got %d < %d", changedAt, startedAt)
-	}
-}
-
 func TestUpdatePasswordStoresStrongHash(t *testing.T) {
 	router, r := setupContractRouter(t, "contract-jwt-secret")
 	seedLegacyUser(t, r, 9104, "legacy-self-user", "legacy-self-pass")
 	startedAt := time.Now().UnixMilli()
-	token, err := auth.GenerateToken(9104, "legacy-self-user", 1, "contract-jwt-secret")
+	token, err := auth.GenerateToken(9104, "legacy-self-user", 0, "contract-jwt-secret")
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
@@ -376,7 +331,8 @@ func TestUpdatePasswordStoresStrongHash(t *testing.T) {
 	}
 }
 
-func TestSpeedLimitTunnelsRouteRemoved(t *testing.T) {
+// FLYX is single-user: the user, group, permission and speed-limit APIs are gone.
+func TestMultiUserAndLimitRoutesRemoved(t *testing.T) {
 	secret := "contract-jwt-secret"
 	router, _ := setupContractRouter(t, secret)
 
@@ -384,15 +340,21 @@ func TestSpeedLimitTunnelsRouteRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed-limit/tunnels", nil)
-	req.Header.Set("Authorization", token)
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404 after route removal, got %d", resp.Code)
+	for _, path := range []string{
+		"/api/v1/speed-limit/tunnels", "/api/v1/speed-limit/list", "/api/v1/speed-limit/create",
+		"/api/v1/user/list", "/api/v1/user/create", "/api/v1/user/quota/reset",
+		"/api/v1/user/subscription/list", "/api/v1/tunnel/user/assign", "/api/v1/tunnel/user/list",
+		"/api/v1/group/user/list", "/api/v1/group/tunnel/list", "/api/v1/group/permission/list",
+		"/api/v1/monitor/permission/list", "/api/v1/monitor/access", "/api/v1/user/package",
+		"/api/v1/announcement/get", "/api/v1/announcement/update",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Authorization", token)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusNotFound {
+			t.Errorf("%s: expected status 404 after route removal, got %d", path, resp.Code)
+		}
 	}
 }
 
@@ -419,13 +381,13 @@ func TestBackupExportImportRestoreContracts(t *testing.T) {
 		t.Fatalf("seed config for backup contract: %v", err)
 	}
 
-	t.Run("non-admin is blocked on backup export", func(t *testing.T) {
+	t.Run("non-admin is refused on backup export", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/backup/export", nil)
 		req.Header.Set("Authorization", userToken)
 		resp := httptest.NewRecorder()
 
 		router.ServeHTTP(resp, req)
-		assertCodeMsg(t, resp, 403, "权限不足，仅管理员可操作")
+		assertCodeMsg(t, resp, 401, "只有管理员可以登录")
 	})
 
 	t.Run("standard and duplicate export routes both work", func(t *testing.T) {
@@ -837,7 +799,7 @@ func exportBackupPayload(t *testing.T, router http.Handler, path, token string) 
 	return payload
 }
 
-func setupContractRouter(t *testing.T, jwtSecret string, configure ...func(*handler.Handler)) (http.Handler, *repo.Repository) {
+func setupContractRouter(t *testing.T, jwtSecret string) (http.Handler, *repo.Repository) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "contract.db")
 	r, err := repo.Open(dbPath)
@@ -849,9 +811,6 @@ func setupContractRouter(t *testing.T, jwtSecret string, configure ...func(*hand
 	})
 
 	h := handler.New(r, jwtSecret)
-	for _, apply := range configure {
-		apply(h)
-	}
 	return httpserver.NewRouter(h, jwtSecret), r
 }
 
@@ -889,7 +848,7 @@ func seedLegacyUserWithStatus(t *testing.T, r *repo.Repository, id int64, userna
 	legacyChangedAt := now - 10_000
 	if err := r.DB().Exec(`
 		INSERT INTO user(id, user, pwd, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, max_conn, created_time, updated_time, status, password_changed_at)
-		VALUES(?, ?, ?, 1, 2727251700000, 99999, 0, 0, 1, 99999, 0, ?, ?, ?, ?)
+		VALUES(?, ?, ?, 0, 2727251700000, 99999, 0, 0, 1, 99999, 0, ?, ?, ?, ?)
 	`, id, username, security.MD5(password), now, now, status, legacyChangedAt).Error; err != nil {
 		t.Fatalf("seed legacy user %s: %v", username, err)
 	}

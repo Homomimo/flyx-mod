@@ -1,7 +1,7 @@
 """Step 3: templates, subscriptions, monitors, 24h of metrics and latency, all online."""
 import json, sqlite3, sys, time, urllib.request, random, math
 B = "http://127.0.0.1:16370/api/v1"; DB = sys.argv[1]; st = json.load(open(DB + ".seed.json"))
-tok, ids, users = st["token"], st["ids"], st["users"]
+tok, ids = st["token"], st["ids"]
 now = int(time.time() * 1000); G = 1024 ** 3; DAY = 86400000
 random.seed(7)
 def api(path, body=None):
@@ -82,8 +82,8 @@ s2 = sub("小明 · 手机", [g_all], options={"templates": {"clash": t1, "singb
          expireTime=now + 60 * DAY)
 s3 = sub("阿强 · 电脑", [g_own], trafficLimit=100 * G, resetDay=15, expireTime=now + 5 * DAY)
 s4 = sub("机场备用", [g_air, g_own])
-x("UPDATE subscription SET user_id=?, upload_bytes=?, download_bytes=? WHERE id=?", (users["xiaoming"], 6 * G, 62 * G, s2))
-x("UPDATE subscription SET user_id=?, upload_bytes=?, download_bytes=? WHERE id=?", (users["aqiang"], 9 * G, 83 * G, s3))
+x("UPDATE subscription SET upload_bytes=?, download_bytes=? WHERE id=?", (6 * G, 62 * G, s2))
+x("UPDATE subscription SET upload_bytes=?, download_bytes=? WHERE id=?", (9 * G, 83 * G, s3))
 for iid in inb.values():
     x("UPDATE node_inbound SET upload_bytes=?, download_bytes=? WHERE id=?", (random.randint(1, 20) * G, random.randint(20, 300) * G, iid))
 
@@ -122,18 +122,6 @@ for name, nid in ids.items():
             lat = int(base_lat[name] * (1 + 0.08 * j) * evening * random.uniform(0.92, 1.1))
             loss = 0 if random.random() > 0.08 else round(random.uniform(1, 8))
             x("INSERT INTO node_latency_sample(node_id, created_time, point, ok, latency_ms, loss_pct) VALUES(?,?,?,1,?,?)", (nid, t, p, lat, loss))
-
-# 24h of per-user traffic for the user dashboard
-import datetime
-for uid, scale in [(users["xiaoming"], 1.0), (users["aqiang"], 1.6), (users["lili"], 0.4)]:
-    total = 0
-    for h in range(24, 0, -1):
-        t = now - h * 3600000
-        hour = datetime.datetime.fromtimestamp(t / 1000).hour
-        flow = int(scale * G * (0.3 + 1.5 * max(0, math.sin((hour - 8) / 24 * 2 * math.pi))) * random.uniform(0.7, 1.3))
-        total += flow
-        x("INSERT INTO statistics_flow(user_id, flow, total_flow, time, created_time) VALUES(?,?,?,?,?)",
-          (uid, flow, total, datetime.datetime.fromtimestamp(t / 1000).strftime("%H:00"), t))
 
 # everything online
 x("UPDATE node SET status = 1")

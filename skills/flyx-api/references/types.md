@@ -26,47 +26,6 @@ interface PaginatedResponse<T> {
 }
 ```
 
-## User
-
-```typescript
-interface User {
-  id: number;
-  user: string;           // Username
-  pwd?: string;           // Password (only on create/update)
-  name?: string;          // Display name
-  role_id: number;        // 0 = admin, 1 = regular
-  status: number;         // 1 = active, 0 = disabled
-  flow: number;           // Traffic quota in GB
-  in_flow: number;        // Used upload in bytes
-  out_flow: number;       // Used download in bytes
-  exp_time: number;       // Expiry timestamp (ms), 0 = never
-  flow_reset_time: number;// Monthly reset day (1-28), 0 = no reset
-  created_at?: number;
-  updated_at?: number;
-}
-
-interface UserCreateRequest {
-  user: string;
-  pwd: string;
-  name?: string;
-  status?: number;
-  flow?: number;
-  num?: number;
-  expTime?: number;
-  flowResetTime?: number;
-  groupIds?: number[];
-}
-
-interface UserPackage {
-  flow: number;           // Total quota in GB
-  inFlow: number;         // Used upload in bytes
-  outFlow: number;        // Used download in bytes
-  tunnels: number;        // Assigned tunnel count
-  forwards: number;       // Created forward count
-  expTime: number;        // Expiry timestamp (ms)
-}
-```
-
 ## Node
 
 ```typescript
@@ -119,8 +78,6 @@ interface Tunnel {
   name: string;
   type: number;           // 1 = port forward, 2 = tunnel forward
   protocol?: string;
-  flow: number;           // Traffic multiplier
-  traffic_ratio: number;
   status: number;         // 1 = active, 0 = disabled
   ip_preference?: string; // "ipv4", "ipv6", ""
   in_ip?: string;
@@ -133,8 +90,6 @@ interface Tunnel {
 interface TunnelCreateRequest {
   name: string;
   type: number;
-  flow?: number;
-  trafficRatio?: number;
   status?: number;
   ipPreference?: string;
   inIp?: string;
@@ -157,8 +112,6 @@ interface Forward {
   remote_addr: string;
   strategy: string;       // "fifo" | "round"
   status: number;         // 1 = running, 0 = paused
-  speed_id: number;
-  speed_name?: string;
   in_flow: number;        // Upload bytes
   out_flow: number;       // Download bytes
   created_at?: number;
@@ -171,64 +124,6 @@ interface ForwardCreateRequest {
   remoteAddr: string;
   strategy?: string;
   inPort?: number;
-  speedId?: number;
-}
-```
-
-## Speed Limit
-
-```typescript
-interface SpeedLimit {
-  id: number;
-  name: string;
-  speed: number;          // Mbps
-  status: number;
-  created_at?: number;
-}
-```
-
-## Groups
-
-```typescript
-interface TunnelGroup {
-  id: number;
-  name: string;
-  status: number;
-  tunnel_ids?: number[];
-  created_at?: number;
-}
-
-interface UserGroup {
-  id: number;
-  name: string;
-  status: number;
-  user_ids?: number[];
-  created_at?: number;
-}
-
-interface GroupPermission {
-  id: number;
-  user_group_id: number;
-  user_group_name?: string;
-  tunnel_group_id: number;
-  tunnel_group_name?: string;
-  created_at?: number;
-}
-```
-
-## User-Tunnel Assignment
-
-```typescript
-interface UserTunnel {
-  id: number;
-  user_id: number;
-  tunnel_id: number;
-  tunnel_name?: string;
-  flow: number;           // Quota for this tunnel in GB
-  in_flow: number;
-  out_flow: number;
-  exp_time: number;
-  speed_id: number;
 }
 ```
 
@@ -337,10 +232,6 @@ class FlvxClient {
 
   async createForward(req: ForwardCreateRequest): Promise<Forward> {
     return this.request("/api/v1/forward/create", req);
-  }
-
-  async getUserPackage(): Promise<UserPackage> {
-    return this.request("/api/v1/user/package", {});
   }
 }
 ```

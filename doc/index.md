@@ -34,7 +34,7 @@ features:
   - title: 延迟与回程
     details: 服务器定时测到北京 / 上海 / 广东三网的延迟和丢包，识别 CN2 GIA、9929、CMIN2 等回程线路，有趋势图和异常告警。
   - title: 流量转发
-    details: TCP / UDP 端口转发与隧道转发，配额、限速、单向或双向计费。
+    details: TCP / UDP 端口转发与隧道转发，realm、nftables 引擎，按规则统计上下行流量。
   - title: 面板内升级
     details: 设置里检查更新、一键升级，也可以用安装脚本更新；agent 可以批量升级。
 ---

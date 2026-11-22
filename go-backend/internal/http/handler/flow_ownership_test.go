@@ -62,7 +62,7 @@ func TestFlowOwnershipScopedServiceRequiresStoredNodeOwnership(t *testing.T) {
 		if share.CurrentFlow != want {
 			t.Fatalf("node=%d: got flow=%d want=%d", nodeID, share.CurrentFlow, want)
 		}
-		if len(batch.flowDeltas) != 0 || len(batch.quotaUsage) != 0 || len(batch.orphanServices) != 0 {
+		if len(batch.flowDeltas) != 0 || len(batch.orphanServices) != 0 {
 			t.Fatalf("scoped traffic entered local accounting: %+v", batch)
 		}
 	}
@@ -170,8 +170,8 @@ func TestFlowOwnershipLocalForwardRequiresReportingNode(t *testing.T) {
 		}
 		want := int64(0)
 		if nodeID == 2 {
-			// Missing legacy tunnel metadata defaults to single-direction billing.
-			want = 80
+			// Both directions count; there is no billing direction any more.
+			want = 200
 		}
 		if forward.InFlow+forward.OutFlow != want {
 			t.Fatalf("node %d local traffic=%d want=%d", nodeID, forward.InFlow+forward.OutFlow, want)

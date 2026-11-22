@@ -8,7 +8,7 @@
 
 在一个面板里管理服务器、节点与中转：一键部署 Xray / sing-box / Snell 节点，对接中转，生成订阅。
 
-[在线演示](https://kure29.github.io/flyx/demo/) · [使用文档](https://kure29.github.io/flyx/) · [快速上手](https://kure29.github.io/flyx/guide/getting-started) · [下载](https://github.com/kure29/flyx/releases) · [Telegram 交流群](https://t.me/flyx_chat)
+[在线演示](https://kure29.github.io/flyx/demo/) · [使用文档](https://kure29.github.io/flyx/) · [快速上手](https://kure29.github.io/flyx/guide/getting-started) · [下载](https://github.com/Homomimo/flyx-mod/releases) · [Telegram 交流群](https://t.me/flyx_chat)
 
 </div>
 
@@ -19,7 +19,9 @@
 - **对接中转**：端口转发、隧道转发，或“前置 → IX → 落地”多跳线路；入站白名单、真实客户端 IP
 - **导入节点**：粘贴分享链接、Clash / sing-box / Surge 配置或订阅地址，别处搭好的节点也能对接中转
 - **订阅**：参考 Sub-Store，节点组统一挑选节点、过滤、改名，多个订阅自由组合、加国旗、按地区分组，可分享给他人（独立凭据、到期自动断开）；按客户端自动返回 Clash / Mihomo、sing-box、Surge 或通用 base64
-- **流量转发**：TCP / UDP 端口转发与隧道转发，配额、限速、单向或双向计费
+- **流量转发**：TCP / UDP 端口转发与隧道转发，realm、nftables 引擎，按规则统计上下行流量
+- **单用户**：只有管理员一个账号，可以只用 GitHub 或通行证密钥登录
+- **状态页**：不用登录的公开页面，显示服务器在线情况、近 30 天可用率、负载与流量，不显示 IP、用户和协议
 - **面板内升级**：检查更新、一键升级
 
 ## 安装
@@ -27,7 +29,7 @@
 面板（需要 Docker）：
 
 ```bash
-curl -L https://github.com/Homomimo/flyx/releases/latest/download/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
+curl -L https://github.com/Homomimo/flyx-mod/releases/latest/download/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
 ```
 
 选 `1. 安装面板`，完成后访问 `http://服务器IP:6366`，默认账号 `admin_user` / `admin_user`，登录后请立即修改密码。

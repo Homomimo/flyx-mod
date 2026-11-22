@@ -32,6 +32,8 @@ func handleKernelCommand(cmdType string, data interface{}) (interface{}, error) 
 			return nil, fmt.Errorf("解析内核操作失败: %v", err)
 		}
 		return m.Control(req.Type, req.Action)
+	case "SubscriptionCounters":
+		return m.SubscriptionCounters()
 	case "KernelStatus":
 		var req struct {
 			Logs string `json:"logs"`

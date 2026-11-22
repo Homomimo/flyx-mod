@@ -134,24 +134,32 @@ jobs:
         with:
           name: gost-binary-amd64
           path: ./go-gost/gost-amd64
+          # Only passed to the later jobs of this run; the release keeps the binaries.
+          retention-days: 1
 
       - name: Upload GOST ARM64 artifact
         uses: actions/upload-artifact@v6
         with:
           name: gost-binary-arm64
           path: ./go-gost/gost-arm64
+          # Only passed to the later jobs of this run; the release keeps the binaries.
+          retention-days: 1
 
       - name: Upload GOST AMD64 checksum artifact
         uses: actions/upload-artifact@v6
         with:
           name: gost-checksum-amd64
           path: ./go-gost/gost-amd64.sha256
+          # Only passed to the later jobs of this run; the release keeps the binaries.
+          retention-days: 1
 
       - name: Upload GOST ARM64 checksum artifact
         uses: actions/upload-artifact@v6
         with:
           name: gost-checksum-arm64
           path: ./go-gost/gost-arm64.sha256
+          # Only passed to the later jobs of this run; the release keeps the binaries.
+          retention-days: 1
 
   build-agent-image:
     name: Build & Push Node Agent Image
@@ -299,7 +307,8 @@ jobs:
             -t ${{ env.REGISTRY }}/${OWNER}/flux-panel-backend:latest \
             -t ${{ env.REGISTRY }}/${OWNER}/flyx-panel-backend:${VERSION} \
             -t ${{ env.REGISTRY }}/${OWNER}/flux-panel-backend:${VERSION} \
-            ./go-backend
+            -f go-backend/Dockerfile \
+            .
 
   create-release:
     name: Create Release (Tag Only)
@@ -387,7 +396,7 @@ jobs:
           OWNER="${{ needs.check-version.outputs.image_owner }}"
 
           # 更新内容取自 doc/changelog.md 里这个版本的一节，没有时列出上个版本以来的提交
-          bash .github/scripts/release-notes.sh "${VERSION}" "${{ github.repository }}" \
+          .github/scripts/release-notes.sh "${VERSION}" "${{ github.repository }}" \
             "${{ env.REGISTRY }}/${OWNER}" "${{ github.sha }}" > release-notes.md
           cat release-notes.md
 

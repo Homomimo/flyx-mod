@@ -281,10 +281,9 @@ func (h *Handler) applyRealmCounters(nodeID int64, epoch string, counters []agen
 		return
 	}
 	var batch flowUploadBatch
-	var quotas map[int64]*model.UserQuotaView
 	applied, err := h.repo.ApplyCounterSnapshot(nodeID, "kernel", sequence, epoch, func(tx *repo.Repository) error {
 		var err error
-		batch, quotas, err = (&Handler{repo: tx}).applyRealmCountersTx(nodeID, epoch, counters, now)
+		batch, err = (&Handler{repo: tx}).applyRealmCountersTx(nodeID, epoch, counters, now)
 		return err
 	})
 	if err != nil {
@@ -292,10 +291,10 @@ func (h *Handler) applyRealmCounters(nodeID int64, epoch string, counters []agen
 		return
 	}
 	if applied {
-		h.enforceFlowUploadBatch(nodeID, batch, quotas)
+		h.enforceFlowUploadBatch(nodeID, batch)
 	}
 }
-func (h *Handler) applyRealmCountersTx(nodeID int64, epoch string, counters []agentKernelCounter, now time.Time) (flowUploadBatch, map[int64]*model.UserQuotaView, error) {
+func (h *Handler) applyRealmCountersTx(nodeID int64, epoch string, counters []agentKernelCounter, now time.Time) (flowUploadBatch, error) {
 
 	samples := make([]runtimenft.CounterSample, 0, len(counters))
 	hashes := map[int64]string{}
@@ -315,7 +314,7 @@ func (h *Handler) applyRealmCountersTx(nodeID int64, epoch string, counters []ag
 		hashes[fid] = "realm:" + epoch
 	}
 	if len(samples) == 0 {
-		return flowUploadBatch{}, nil, nil
+		return flowUploadBatch{}, nil
 	}
 	return h.accountForwardCounterSamplesTx(nodeID, samples, hashes, now)
 }

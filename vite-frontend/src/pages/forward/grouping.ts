@@ -83,16 +83,6 @@ export const normalizeTunnelTrafficRatio = (value: unknown): number => {
   return 1;
 };
 
-export const formatTunnelTrafficRatio = (value?: number): string => {
-  const ratio = normalizeTunnelTrafficRatio(value);
-
-  if (Number.isInteger(ratio)) {
-    return `${ratio}x`;
-  }
-
-  return `${parseFloat(ratio.toFixed(2))}x`;
-};
-
 export const buildForwardGroupOrderLocalKey = (tokenUserId: number): string => {
   return `${FORWARD_GROUP_ORDER_LOCAL_STORAGE_PREFIX}:u:${tokenUserId}`;
 };
@@ -376,21 +366,6 @@ export const mapForwardApiItems = (items: ForwardApiItem[]): Forward[] => {
       typeof forward.userName === "string" ? forward.userName : undefined,
     userId: typeof forward.userId === "number" ? forward.userId : undefined,
     inx: typeof forward.inx === "number" ? forward.inx : undefined,
-    speedId:
-      typeof forward.speedId === "number" || forward.speedId === null
-        ? forward.speedId
-        : undefined,
-    ipMaxConn:
-      typeof forward.ipMaxConn === "number" ? forward.ipMaxConn : undefined,
-    ipSpeedId:
-      typeof forward.ipSpeedId === "number" || forward.ipSpeedId === null
-        ? forward.ipSpeedId
-        : undefined,
-    ipSpeedLimitName:
-      typeof forward.ipSpeedLimitName === "string"
-        ? forward.ipSpeedLimitName
-        : undefined,
-    maxConn: typeof forward.maxConn === "number" ? forward.maxConn : undefined,
     proxyProtocol:
       typeof forward.proxyProtocol === "number"
         ? forward.proxyProtocol

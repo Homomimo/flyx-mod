@@ -100,46 +100,6 @@ class APIClient:
         response = self.post("/config/update-single", {"name": name, "value": value})
         return response.get("code") == 0
 
-    def list_users(self, keyword: str = "") -> list[dict]:
-        """List all users."""
-        response = self.post("/user/list", {"keyword": keyword})
-        if response.get("code") == 0:
-            return response.get("data", [])
-        return []
-
-    def create_user(
-        self,
-        username: str,
-        password: str,
-        name: str = "",
-        role_id: int = 1,
-        flow: int = 0,
-        num: int = 0,
-        exp_time: int = 0,
-    ) -> dict[str, Any]:
-        """Create a new user."""
-        return self.post(
-            "/user/create",
-            {
-                "user": username,
-                "pwd": password,
-                "name": name or username,
-                "roleId": role_id,
-                "flow": flow,
-                "num": num,
-                "expTime": exp_time,
-            },
-        )
-
-    def update_user(self, user_id: int, **kwargs) -> dict[str, Any]:
-        """Update user."""
-        data = {"id": user_id, **kwargs}
-        return self.post("/user/update", data)
-
-    def delete_user(self, user_id: int) -> dict[str, Any]:
-        """Delete user."""
-        return self.post("/user/delete", {"id": user_id})
-
     def list_nodes(self) -> list[dict]:
         """List all nodes."""
         response = self.post("/node/list")
@@ -239,26 +199,6 @@ class APIClient:
 
 
 class TestUser:
-    """Test user helper for E2E tests."""
+    """The panel's only account, the admin, as the tests log in."""
 
     DEFAULT_ADMIN = ("admin_user", "admin_user")
-
-    def __init__(self, api: APIClient, username: str, password: str):
-        self.api = api
-        self.username = username
-        self.password = password
-        self.user_id: Optional[int] = None
-
-    @classmethod
-    def create_test_user(cls, api: APIClient, username: str = "test_user", password: str = "test123") -> "TestUser":
-        """Create a test user and return TestUser instance."""
-        response = api.create_user(username, password, name=f"Test {username}")
-        user = cls(api, username, password)
-        if response.get("code") == 0:
-            user.user_id = response.get("data", {}).get("id")
-        return user
-
-    def cleanup(self):
-        """Delete the test user."""
-        if self.user_id and self.api.token:
-            self.api.delete_user(self.user_id)

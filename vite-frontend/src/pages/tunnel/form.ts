@@ -157,10 +157,6 @@ export const validateTunnelForm = (
     }
   }
 
-  if (form.trafficRatio <= 0 || form.trafficRatio > 100.0) {
-    errors.trafficRatio = "流量倍率须大于0，支持小数（如 0.5）";
-  }
-
   const rawProbeHost = form.probeTargetHost || "";
   const probeHost = rawProbeHost.trim();
   const probePortInput = form.probeTargetPort;
@@ -244,16 +240,5 @@ export const getTunnelTypeDisplay = (type: number) => {
       return { text: "隧道转发", color: "secondary" };
     default:
       return { text: "未知", color: "default" };
-  }
-};
-
-export const getTunnelFlowDisplay = (flow: number) => {
-  switch (flow) {
-    case 1:
-      return "单向计算";
-    case 2:
-      return "双向计算";
-    default:
-      return "未知";
   }
 };

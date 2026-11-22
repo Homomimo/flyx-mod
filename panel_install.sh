@@ -8,7 +8,7 @@ export LC_ALL=C
 
 
 # GitHub repo used for release downloads
-REPO="kure29/flyx"
+REPO="Homomimo/flyx-mod"
 
 # 固定版本号（Release 构建时自动填充，留空则获取最新版）
 PINNED_VERSION=""
@@ -336,11 +336,25 @@ get_container_compose_label() {
   printf '%s' "$value"
 }
 
+# Other owners FLYX images were published under (briefly seren233, 3.9.0):
+# deployments that still pull from there are ours too.
+FLYX_LEGACY_IMAGE_OWNERS="kure29 seren233"
+
 # Images of this project live under ghcr.io/<owner>/; flux-panel and FLVX
-# publish theirs elsewhere.
-flyx_image_prefix() {
-  local owner="${REPO%%/*}"
-  printf 'ghcr.io/%s/' "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')"
+# publish theirs elsewhere. One prefix per line, the current owner first.
+flyx_image_prefixes() {
+  local owner
+  for owner in "${REPO%%/*}" $FLYX_LEGACY_IMAGE_OWNERS; do
+    printf 'ghcr.io/%s/\n' "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')"
+  done | awk '!seen[$0]++'
+}
+
+is_flyx_image() {
+  local prefix
+  while IFS= read -r prefix; do
+    [[ -n "$prefix" && "$1" == "$prefix"* ]] && return 0
+  done < <(flyx_image_prefixes)
+  return 1
 }
 
 # flux-panel, FLVX and FLYX before 3.4.0 all name the backend
@@ -348,13 +362,18 @@ flyx_image_prefix() {
 is_flyx_container() {
   local image
   image=$(docker inspect -f '{{.Config.Image}}' "$1" 2>/dev/null || true)
-  [[ "$image" == "$(flyx_image_prefix)"* ]]
+  is_flyx_image "$image"
 }
 
 # The same check for a deployment directory: its compose file must pull our
 # images, so another panel's .env and docker-compose.yml are never touched.
 is_flyx_deploy_dir() {
-  [[ -f "$1/.env" && -f "$1/docker-compose.yml" ]] && grep -Fq "$(flyx_image_prefix)" "$1/docker-compose.yml"
+  [[ -f "$1/.env" && -f "$1/docker-compose.yml" ]] || return 1
+  local prefix
+  while IFS= read -r prefix; do
+    [[ -n "$prefix" ]] && grep -Fq "$prefix" "$1/docker-compose.yml" && return 0
+  done < <(flyx_image_prefixes)
+  return 1
 }
 
 detect_panel_backend() {

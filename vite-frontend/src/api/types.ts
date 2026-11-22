@@ -12,38 +12,11 @@ export interface NodeApiItem {
   nftError?: string;
   remark?: string;
   expiryTime?: number;
-  renewalCycle?: "month" | "quarter" | "year" | "";
+  renewalCycle?: string;
+  region?: string;
+  regionDetected?: string;
   expiryReminderDismissed?: number;
   syncError?: string;
-  [key: string]: unknown;
-}
-
-export interface UserApiItem {
-  id: number;
-  user: string;
-  name?: string;
-  status: number;
-  flow: number;
-  flowMiB?: number;
-  num: number;
-  expTime?: number;
-  flowResetTime?: number;
-  maxConn?: number;
-  inFlow?: number;
-  outFlow?: number;
-  dailyQuotaGB?: number;
-  monthlyQuotaGB?: number;
-  dailyUsedBytes?: number;
-  monthlyUsedBytes?: number;
-  disabledByQuota?: number;
-  quotaDisabledAt?: number;
-  [key: string]: unknown;
-}
-
-export interface UserListQuery {
-  current?: number;
-  size?: number;
-  keyword?: string;
   [key: string]: unknown;
 }
 
@@ -134,48 +107,6 @@ export interface StatisticsFlowApiItem {
   [key: string]: unknown;
 }
 
-export interface SpeedLimitApiItem {
-  id: number;
-  name: string;
-  speed: number;
-  status: number;
-  createdTime: string;
-  updatedTime: string;
-  uploadSpeed?: number;
-  downloadSpeed?: number;
-  [key: string]: unknown;
-}
-
-export interface TunnelGroupApiItem {
-  id: number;
-  name: string;
-  status: number;
-  tunnelIds: number[];
-  tunnelNames: string[];
-  createdTime: number;
-  [key: string]: unknown;
-}
-
-export interface UserGroupApiItem {
-  id: number;
-  name: string;
-  status: number;
-  userIds: number[];
-  userNames: string[];
-  createdTime: number;
-  [key: string]: unknown;
-}
-
-export interface GroupPermissionApiItem {
-  id: number;
-  userGroupId: number;
-  userGroupName: string;
-  tunnelGroupId: number;
-  tunnelGroupName: string;
-  createdTime: number;
-  [key: string]: unknown;
-}
-
 export interface TunnelDiagnosisApiItem {
   success: boolean;
   description: string;
@@ -220,23 +151,6 @@ export interface SystemUpgradeReleaseApiItem {
   publishedAt: string;
   prerelease: boolean;
   channel: "stable" | "dev";
-}
-
-export interface UserPackageInfoApiData {
-  userInfo: {
-    flow: number;
-    inFlow: number;
-    outFlow: number;
-    num: number;
-    expTime?: string;
-    flowResetTime?: number;
-    maxConn?: number;
-    [key: string]: unknown;
-  };
-  tunnelPermissions: UserTunnelPermissionApiItem[];
-  forwards: ForwardApiItem[];
-  statisticsFlows: StatisticsFlowApiItem[];
-  [key: string]: unknown;
 }
 
 export interface BatchOperationResult {
@@ -297,22 +211,6 @@ export interface TunnelBatchDeleteWithForwardsApiData {
   [key: string]: unknown;
 }
 
-export interface UserMutationPayload {
-  id?: number;
-  user?: string;
-  name?: string;
-  password?: string;
-  status?: number;
-  flow?: number;
-  num?: number;
-  expTime?: number | string;
-  flowResetTime?: number;
-  maxConn?: number;
-  dailyQuotaGB?: number;
-  monthlyQuotaGB?: number;
-  tunnelFlow?: number;
-}
-
 export interface NodeMutationPayload {
   id?: number | null;
   name?: string;
@@ -323,7 +221,21 @@ export interface NodeMutationPayload {
   notifyEvents?: NodeNotifyEvents | null;
   remark?: string;
   expiryTime?: number;
-  renewalCycle?: "month" | "quarter" | "year" | "";
+  /** "month", "quarter", "year", "<n>m" or "<n>y"; "" for none. */
+  renewalCycle?: string;
+  /** 地区代码，空字符串为自动识别；不传则不修改。 */
+  region?: string;
+  /** Profile fields; absent ones are left as they are. */
+  group?: string;
+  publicNote?: string;
+  statusVisible?: boolean;
+  price?: number;
+  currency?: string;
+  trafficQuotaGb?: number;
+  trafficCalc?: string;
+  trafficResetDay?: number;
+  /** Sets this period's traffic to what the provider shows (GB). */
+  trafficCorrection?: { upGb?: number; downGb?: number };
   serverIp?: string;
   serverIpV4?: string;
   serverIpV6?: string;
@@ -387,39 +299,6 @@ export interface TunnelMutationPayload {
   chainNodes?: TunnelChainNodePayload[][];
 }
 
-export interface UserQuotaResetPayload {
-  userId: number;
-  scope?: "daily" | "monthly" | "all";
-}
-
-export interface UserTunnelAssignPayload {
-  userId?: number;
-  id?: number;
-  tunnelId?: number;
-  flow?: number;
-  flowMiB?: number;
-  num?: number;
-  expTime?: number;
-  flowResetTime?: number;
-  maxConn?: number;
-  status?: number;
-  speedId?: number | null;
-  tunnels?: Array<{ tunnelId: number; speedId?: number | null }>;
-}
-
-export interface UserTunnelListQuery {
-  userId?: number;
-  tunnelId?: number;
-  current?: number;
-  size?: number;
-}
-
-export interface UserTunnelRemovePayload {
-  id?: number;
-  userId?: number;
-  tunnelId?: number;
-}
-
 export interface ForwardMutationPayload {
   id?: number;
   name?: string;
@@ -437,13 +316,6 @@ export interface ForwardMutationPayload {
   proxyProtocol?: number;
   proxyProtocolReceive?: number;
   proxyProtocolSend?: number;
-}
-
-export interface SpeedLimitMutationPayload {
-  id?: number;
-  name?: string;
-  speed?: number;
-  status?: number;
 }
 
 export interface UpdatePasswordPayload {
@@ -584,17 +456,6 @@ export interface MonitorTunnelApiItem {
   updatedTime: number;
 }
 
-export interface MonitorPermissionApiItem {
-  id: number;
-  userId: number;
-  createdTime: number;
-}
-
-export interface MonitorAccessApiData {
-  allowed: boolean;
-  reason?: string;
-}
-
 export interface TunnelQualityHopApiItem {
   fromNodeId: number;
   fromNodeName: string;
@@ -718,6 +579,7 @@ export interface InboundSettings {
   flow?: string;
   password?: string;
   method?: string;
+  ssSubscriptionUsers?: boolean;
   snellVersion?: number;
   /** Snell v6 traffic shaping: unset (default) or "unshaped". */
   snellMode?: string;
@@ -888,6 +750,11 @@ export interface InboundApiItem {
   outboundMissing?: boolean;
   /** 分流 rules, tried in order before the default exit. */
   splitRules: SplitRule[];
+  /** The default exit is 阻断: only what a 分流 rule sends elsewhere gets out. */
+  defaultBlock?: boolean;
+  /** Speed limits in Mbit/s, the inbound's total; 0 = none. */
+  rateUpMbps?: number;
+  rateDownMbps?: number;
   /** The user's labels, for telling nodes apart in the list. */
   tags?: string[];
 }
@@ -919,6 +786,8 @@ export interface InboundMutationPayload {
   whitelistExtra: string;
   outboundId: number;
   splitRules: SplitRule[];
+  rateUpMbps?: number;
+  rateDownMbps?: number;
   enabled?: boolean;
 }
 

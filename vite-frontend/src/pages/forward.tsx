@@ -1,4 +1,4 @@
-import type { BatchOperationFailure, SpeedLimitApiItem } from "@/api/types";
+import type { BatchOperationFailure } from "@/api/types";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import toast from "react-hot-toast";
@@ -40,7 +40,6 @@ import { Progress } from "@/shadcn-bridge/heroui/progress";
 import {
   createForward,
   getForwardList,
-  getSpeedLimitList,
   getPeerShareList,
   getPeerRemoteUsageList,
   updateForward,
@@ -127,7 +126,6 @@ import {
   buildForwardTunnelGroupKey,
   compareForwardTunnelNameAsc,
   normalizeTunnelTrafficRatio,
-  formatTunnelTrafficRatio,
   buildForwardGroupOrderLocalKey,
   buildForwardGroupCollapsedLocalKey,
   parsePreferenceMap,
@@ -252,11 +250,6 @@ export default function ForwardPage({
     [],
   );
   const [nodes, setNodes] = useCachedState<Node[]>(PAGE, "nodes", []);
-  const [speedLimits, setSpeedLimits] = useCachedState<SpeedLimitApiItem[]>(
-    PAGE,
-    "speedLimits",
-    [],
-  );
   //   const isMobile = useMobileBreakpoint();
   // searchKeyword removed
   // isSearchVisible removed
@@ -337,10 +330,6 @@ export default function ForwardPage({
     remoteAddr: "",
     interfaceName: "",
     strategy: "fifo",
-    speedId: null,
-    ipMaxConn: 0,
-    ipSpeedId: null,
-    maxConn: 0,
     proxyProtocol: 0,
     proxyProtocolReceive: 0,
     proxyProtocolSend: 0,
@@ -974,12 +963,11 @@ export default function ForwardPage({
       setLoading(lod);
       try {
         // One round trip: the lists don't depend on each other.
-        const [[tunnelsRes, speedLimitsRes], [allTunnelsRes, nodesRes]] =
-          await Promise.all([
-            Promise.all([userTunnel(), getSpeedLimitList()]),
-            Promise.allSettled([getTunnelList(), getNodeList()]),
-            refreshForwardList(false),
-          ]);
+        const [tunnelsRes, [allTunnelsRes, nodesRes]] = await Promise.all([
+          userTunnel(),
+          Promise.allSettled([getTunnelList(), getNodeList()]),
+          refreshForwardList(false),
+        ]);
 
         if (tunnelsRes.code === 0) {
           setTunnels(tunnelsRes.data || []);
@@ -997,9 +985,6 @@ export default function ForwardPage({
           setNodes((nodesRes.value.data || []) as Node[]);
         }
 
-        if (speedLimitsRes.code === 0) {
-          setSpeedLimits(speedLimitsRes.data || []);
-        }
         markPageCached(PAGE);
       } catch {
         toast.error("加载数据失败");
@@ -1015,55 +1000,6 @@ export default function ForwardPage({
   }, [loadData]);
 
   // 表单验证
-  const noLimitSpeedLimitIds = useMemo(() => {
-    return new Set(
-      speedLimits
-        .filter((speedLimit) => speedLimit.name.trim() === "不限速")
-        .map((speedLimit) => speedLimit.id),
-    );
-  }, [speedLimits]);
-
-  const speedLimitIds = useMemo(() => {
-    return new Set(speedLimits.map((speedLimit) => speedLimit.id));
-  }, [speedLimits]);
-
-  const availableSpeedLimits = useMemo(() => {
-    return speedLimits.filter(
-      (speedLimit) => !noLimitSpeedLimitIds.has(speedLimit.id),
-    );
-  }, [speedLimits, noLimitSpeedLimitIds]);
-
-  const normalizeSpeedId = (speedId?: number | null): number | null => {
-    if (speedId === null || speedId === undefined) {
-      return null;
-    }
-
-    if (noLimitSpeedLimitIds.has(speedId)) {
-      return null;
-    }
-
-    if (speedLimits.length > 0 && !speedLimitIds.has(speedId)) {
-      return null;
-    }
-
-    return speedId;
-  };
-
-  const isMissingSpeedLimit = (speedId?: number | null): boolean => {
-    if (speedId === null || speedId === undefined) {
-      return false;
-    }
-
-    if (speedLimits.length === 0 || noLimitSpeedLimitIds.has(speedId)) {
-      return false;
-    }
-
-    return !speedLimitIds.has(speedId);
-  };
-
-  const selectedSpeedId = normalizeSpeedId(form.speedId);
-  const selectedIPSpeedId = normalizeSpeedId(form.ipSpeedId);
-
   const validateForm = (): boolean => {
     const newErrors: { [key: string]: string } = {};
 
@@ -1137,9 +1073,6 @@ export default function ForwardPage({
       remoteAddr: "",
       interfaceName: "",
       strategy: "fifo",
-      speedId: null,
-      ipMaxConn: 0,
-      ipSpeedId: null,
       proxyProtocol: 0,
       proxyProtocolReceive: 0,
       proxyProtocolSend: 0,
@@ -1162,10 +1095,6 @@ export default function ForwardPage({
       remoteAddr: forward.remoteAddr.split(",").join("\n"),
       interfaceName: forward.interfaceName || "",
       strategy: forward.strategy || "fifo",
-      speedId: normalizeSpeedId(forward.speedId),
-      ipMaxConn: forward.ipMaxConn ?? 0,
-      ipSpeedId: normalizeSpeedId(forward.ipSpeedId),
-      maxConn: forward.maxConn ?? 0,
       proxyProtocol: forward.proxyProtocol ?? 0,
       proxyProtocolReceive: forward.proxyProtocolReceive ?? 0,
       proxyProtocolSend:
@@ -1325,10 +1254,6 @@ export default function ForwardPage({
       const addressCount = processedRemoteAddr.split(",").length;
 
       let res: { code: number; msg: string };
-      const normalizedSpeedId = normalizeSpeedId(form.speedId);
-      const speedLimitAutoCleared = isMissingSpeedLimit(form.speedId);
-      const normalizedIPSpeedId = normalizeSpeedId(form.ipSpeedId);
-      const ipSpeedLimitAutoCleared = isMissingSpeedLimit(form.ipSpeedId);
 
       if (isEdit) {
         const updateData = {
@@ -1339,10 +1264,6 @@ export default function ForwardPage({
           ...(inIpTouched ? { inIp: form.inIp || "" } : {}),
           remoteAddr: processedRemoteAddr,
           strategy: addressCount > 1 ? form.strategy : "fifo",
-          speedId: normalizedSpeedId,
-          ipMaxConn: form.ipMaxConn,
-          ...(isAdmin ? { ipSpeedId: normalizedIPSpeedId } : {}),
-          maxConn: form.maxConn,
           proxyProtocol: form.proxyProtocolSend,
           proxyProtocolReceive: form.proxyProtocolReceive,
           proxyProtocolSend: form.proxyProtocolSend,
@@ -1357,10 +1278,6 @@ export default function ForwardPage({
           inIp: form.inIp || undefined,
           remoteAddr: processedRemoteAddr,
           strategy: addressCount > 1 ? form.strategy : "fifo",
-          speedId: normalizedSpeedId,
-          ipMaxConn: form.ipMaxConn,
-          ...(isAdmin ? { ipSpeedId: normalizedIPSpeedId } : {}),
-          maxConn: form.maxConn,
           proxyProtocol: form.proxyProtocolSend,
           proxyProtocolReceive: form.proxyProtocolReceive,
           proxyProtocolSend: form.proxyProtocolSend,
@@ -1383,18 +1300,6 @@ export default function ForwardPage({
             duration: 5000,
           });
         });
-        if (speedLimitAutoCleared) {
-          toast("所选限速规则不存在，已自动清除为不限速", {
-            icon: "⚠️",
-            duration: 5000,
-          });
-        }
-        if (isAdmin && ipSpeedLimitAutoCleared) {
-          toast("所选每 IP 限速规则不存在，已自动清除为不限速", {
-            icon: "⚠️",
-            duration: 5000,
-          });
-        }
         toast.success(isEdit ? "修改成功" : "创建成功");
         setModalOpen(false);
         await refreshForwardList(false);
@@ -2702,53 +2607,6 @@ export default function ForwardPage({
     void persistGroupCollapsedToGlobal(nextCollapsedMap);
   };
 
-  // 生成用作筛选项的用户和隧道列表
-  const uniqueUsers = useMemo(() => {
-    const userMap = new Map<number, { id: number; name: string }>();
-
-    forwards.forEach((f) => {
-      const uId = f.userId ?? 0;
-      const userName = normalizeForwardUserName(f.userName);
-      const existingUser = userMap.get(uId);
-
-      if (!existingUser) {
-        userMap.set(uId, { id: uId, name: userName });
-
-        return;
-      }
-
-      if (
-        existingUser.name === UNKNOWN_FORWARD_USER_NAME &&
-        userName !== UNKNOWN_FORWARD_USER_NAME
-      ) {
-        existingUser.name = userName;
-      }
-    });
-
-    const users = Array.from(userMap.values());
-
-    users.sort((a, b) => {
-      if (isAdmin && tokenUserId !== null) {
-        const aIsSelf = a.id === tokenUserId;
-        const bIsSelf = b.id === tokenUserId;
-
-        if (aIsSelf !== bIsSelf) {
-          return aIsSelf ? -1 : 1;
-        }
-      }
-
-      const nameCompare = compareForwardUserNameAsc(a.name, b.name);
-
-      if (nameCompare !== 0) {
-        return nameCompare;
-      }
-
-      return a.id - b.id;
-    });
-
-    return users;
-  }, [forwards, isAdmin, tokenUserId]);
-
   const exitSelectMode = () => {
     setSelectMode(false);
     setSelectedIds(new Set());
@@ -2771,7 +2629,6 @@ export default function ForwardPage({
 
   // 渲染规则行
   const renderForwardRow = (forward: Forward, showTunnel: boolean) => {
-    const ratio = normalizeTunnelTrafficRatio(forward.tunnelTrafficRatio);
     const statusDisplay = getStatusDisplay(forward.status);
     const meta = [
       `${formatInAddress(forward.inIp, forward.inPort) || "-"} → ${
@@ -2800,11 +2657,6 @@ export default function ForwardPage({
                 {hasMultipleAddresses(forward.remoteAddr) && (
                   <Chip className="shrink-0" size="sm" variant="flat">
                     {getStrategyDisplay(forward.strategy).text}
-                  </Chip>
-                )}
-                {showTunnel && ratio !== 1 && (
-                  <Chip className="shrink-0" size="sm" variant="flat">
-                    {formatTunnelTrafficRatio(ratio)}
                   </Chip>
                 )}
               </>
@@ -3064,30 +2916,11 @@ export default function ForwardPage({
                   .filter(Boolean)
                   .join("\n") || "-",
               ],
-              [
-                "隧道",
-                `${forward.tunnelName || UNCATEGORIZED_FORWARD_TUNNEL_NAME}${
-                  normalizeTunnelTrafficRatio(forward.tunnelTrafficRatio) !== 1
-                    ? `（倍率 ${formatTunnelTrafficRatio(forward.tunnelTrafficRatio)}）`
-                    : ""
-                }`,
-              ],
-              isAdmin
-                ? ["用户", normalizeForwardUserName(forward.userName)]
-                : null,
+              ["隧道", forward.tunnelName || UNCATEGORIZED_FORWARD_TUNNEL_NAME],
               hasMultipleAddresses(forward.remoteAddr)
                 ? ["策略", getStrategyDisplay(forward.strategy).text]
                 : null,
               ["流量", getForwardFlowText(forward)],
-              (forward.maxConn || 0) > 0
-                ? ["最大连接", String(forward.maxConn)]
-                : null,
-              (forward.ipMaxConn || 0) > 0
-                ? ["每 IP 连接", String(forward.ipMaxConn)]
-                : null,
-              forward.ipSpeedLimitName
-                ? ["每 IP 限速", forward.ipSpeedLimitName]
-                : null,
               formatDate(forward.createdTime, true)
                 ? ["创建时间", formatDate(forward.createdTime, true)]
                 : null,
@@ -3177,7 +3010,6 @@ export default function ForwardPage({
 
       {/* 新增/编辑模态框 */}
       <ForwardFormModal
-        availableSpeedLimits={availableSpeedLimits}
         currentTunnelIpOptions={currentTunnelIpOptions}
         currentTunnelPortRange={currentTunnelPortRange}
         errors={errors}
@@ -3185,12 +3017,9 @@ export default function ForwardPage({
         getAddressCount={getAddressCount}
         handleSubmit={handleSubmit}
         handleTunnelChange={handleTunnelChange}
-        isAdmin={isAdmin}
         isCurrentTunnelMultiEntrance={isCurrentTunnelMultiEntrance}
         isEdit={isEdit}
         modalOpen={modalOpen}
-        selectedIPSpeedId={selectedIPSpeedId}
-        selectedSpeedId={selectedSpeedId}
         setForm={setForm}
         setInIpTouched={setInIpTouched}
         setModalOpen={setModalOpen}
@@ -3293,14 +3122,12 @@ export default function ForwardPage({
 
       {/* 搜索与筛选五合一模态框 */}
       <ForwardFilterModal
-        isAdmin={isAdmin}
         isSearchModalOpen={isSearchModalOpen}
         resetSearchParams={resetSearchParams}
         searchParams={searchParams}
         setIsSearchModalOpen={setIsSearchModalOpen}
         setSearchParams={setSearchParams}
         tunnels={tunnels}
-        uniqueUsers={uniqueUsers}
       />
 
       <BatchActionResultModal

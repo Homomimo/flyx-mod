@@ -115,27 +115,16 @@ func (r *Repository) UpsertNftCounterStates(inputs []NftCounterStateInput, now i
 	})
 }
 
-func (r *Repository) ApplyNftTrafficAccounting(deltas []FlowUploadCounterDelta, quotaUsage map[int64]int64, states []NftCounterStateInput, now time.Time) (map[int64]*model.UserQuotaView, error) {
+func (r *Repository) ApplyNftTrafficAccounting(deltas []FlowUploadCounterDelta, states []NftCounterStateInput, now time.Time) error {
 	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
+		return errors.New("repository not initialized")
 	}
-
-	quotaViews := map[int64]*model.UserQuotaView{}
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := applyFlowUploadDeltasTx(tx, deltas, now); err != nil {
-			return err
-		}
-		var err error
-		quotaViews, err = r.addUserQuotaUsageBatchTx(tx, quotaUsage, now)
-		if err != nil {
 			return err
 		}
 		return upsertNftCounterStatesTx(tx, states, now.UnixMilli())
 	})
-	if err != nil {
-		return nil, err
-	}
-	return quotaViews, nil
 }
 
 func upsertNftCounterStatesTx(tx *gorm.DB, inputs []NftCounterStateInput, now int64) error {

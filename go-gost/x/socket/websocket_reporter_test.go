@@ -2,6 +2,7 @@ package socket
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -261,5 +262,27 @@ func TestStartWebSocketReporterWithConfigLogsSanitizedURL(t *testing.T) {
 	}
 	if !strings.Contains(output, "secret=%2A%2A%2A") {
 		t.Fatalf("expected logged websocket URL to include masked secret, got %s", output)
+	}
+}
+
+func TestCollectSystemInfoReportsCapacity(t *testing.T) {
+	info := (&WebSocketReporter{}).collectSystemInfo()
+	if info.CPUCores <= 0 {
+		t.Fatalf("cpu_cores = %d", info.CPUCores)
+	}
+	if info.MemTotal == 0 || info.MemUsed > info.MemTotal {
+		t.Fatalf("memory = %d / %d", info.MemUsed, info.MemTotal)
+	}
+	if info.DiskTotal == 0 || info.DiskUsed > info.DiskTotal {
+		t.Fatalf("disk = %d / %d", info.DiskUsed, info.DiskTotal)
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"cpu_cores"`, `"mem_used"`, `"mem_total"`, `"disk_used"`, `"disk_total"`} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("report lacks %s: %s", key, raw)
+		}
 	}
 }

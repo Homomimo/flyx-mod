@@ -11,14 +11,11 @@ import (
 	"go-backend/internal/store/model"
 )
 
-func TestFlowUploadAggregatesRepeatedItemsAndDisablesQuotaImmediately(t *testing.T) {
+func TestFlowUploadAggregatesRepeatedItems(t *testing.T) {
 	secret := "monitoring-jwt-secret"
 	router, repo := setupContractRouter(t, secret)
 	now := time.Now()
 	nowMs := now.UnixMilli()
-	dayKey := int64(now.Year()*10000 + int(now.Month())*100 + now.Day())
-	monthKey := int64(now.Year()*100 + int(now.Month()))
-	const bytesPerGB = int64(1024 * 1024 * 1024)
 
 	node := &model.Node{Name: "node-1", Secret: "node-secret", ServerIP: "127.0.0.1", Port: "10000-10010", TCPListenAddr: "[::]", UDPListenAddr: "[::]", CreatedTime: nowMs, Status: 1}
 	if err := repo.DB().Create(node).Error; err != nil {
@@ -41,9 +38,6 @@ func TestFlowUploadAggregatesRepeatedItemsAndDisablesQuotaImmediately(t *testing
 	if err := repo.DB().Create(&model.ForwardPort{ForwardID: forward.ID, NodeID: node.ID, Port: 10000}).Error; err != nil {
 		t.Fatalf("seed forward node ownership: %v", err)
 	}
-	if err := repo.DB().Exec(`INSERT INTO user_quota(user_id, daily_limit_gb, monthly_limit_gb, daily_used_bytes, monthly_used_bytes, day_key, month_key, disabled_by_quota, disabled_at, paused_forward_ids, created_time, updated_time) VALUES(2, 1, 0, ?, ?, ?, ?, 0, 0, '', ?, ?)`, bytesPerGB-100, bytesPerGB-100, dayKey, monthKey, nowMs, nowMs).Error; err != nil {
-		t.Fatalf("insert user_quota: %v", err)
-	}
 
 	body, err := json.Marshal([]map[string]interface{}{
 		{"n": "20_2_10", "u": 70, "d": 50},
@@ -59,14 +53,9 @@ func TestFlowUploadAggregatesRepeatedItemsAndDisablesQuotaImmediately(t *testing
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", res.Code)
 	}
+	// No quota any more: however much is used, the forward stays on.
 	if got := mustQueryInt(t, repo, `SELECT status FROM forward WHERE id = 20`); got != 1 {
-		t.Fatalf("offline node has not acknowledged pause, got status=%d", got)
-	}
-	if got := mustQueryString(t, repo, `SELECT paused_forward_ids FROM user_quota WHERE user_id = 2`); got != "20" {
-		t.Fatalf("pause intent not retained: %q", got)
-	}
-	if got := mustQueryInt(t, repo, `SELECT disabled_by_quota FROM user_quota WHERE user_id = 2`); got != 1 {
-		t.Fatalf("expected quota disabled flag=1, got %d", got)
+		t.Fatalf("forward paused, status=%d", got)
 	}
 	if got := mustQueryInt(t, repo, `SELECT in_flow FROM forward WHERE id = 20`); got != 80 {
 		t.Fatalf("expected forward in_flow=80, got %d", got)

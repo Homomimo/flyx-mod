@@ -54,10 +54,10 @@ cat <<EOF
 
 \`\`\`bash
 # Backend
-docker pull $IMAGE_PREFIX/flux-panel-backend:$VERSION
+docker pull $IMAGE_PREFIX/flyx-panel-backend:$VERSION
 
 # Frontend
-docker pull $IMAGE_PREFIX/vite-frontend:$VERSION
+docker pull $IMAGE_PREFIX/flyx-panel-frontend:$VERSION
 \`\`\`
 
 ## 🚀 Quick Install

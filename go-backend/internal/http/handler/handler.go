@@ -10,13 +10,13 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go-backend/internal/auth"
+	"go-backend/internal/geoip"
 	"go-backend/internal/health"
 	"go-backend/internal/http/middleware"
 	"go-backend/internal/http/response"
@@ -24,6 +24,7 @@ import (
 	"go-backend/internal/monitoring"
 	runtimenft "go-backend/internal/runtime/nftables"
 	"go-backend/internal/security"
+	"go-backend/internal/statustheme"
 	"go-backend/internal/store/repo"
 	"go-backend/internal/ws"
 )
@@ -72,10 +73,22 @@ type Handler struct {
 	latencyAlerts *latencyAlertTracker
 	notifier      *notifier
 	bestExit      *bestExitManager
+	subRates      subscriptionRateHub
+	// statusLive and statusCache serve the public status page.
+	statusLive  *statusLiveStore
+	statusCache *statusPageCache
+	// statusHistory serves the status page's history charts.
+	statusHistory *statusHistoryCache
+	// statusThemes holds the status page's installed themes.
+	statusThemes *statustheme.Store
+	// geoip finds the country of a node's address; nil when detection is off.
+	geoip *geoip.DB
+	// regionNudge asks the region loop to look at the nodes again now.
+	regionNudge       chan struct{}
+	statusThemeChoice statusThemeChoiceCache
 }
 
 const monitorTunnelQualityEnabledConfigKey = "monitor_tunnel_quality_enabled"
-const allowLocalRemoteAddrConfigKey = "allow_local_remote_addr"
 
 type loginRequest struct {
 	Username  string `json:"username"`
@@ -138,6 +151,11 @@ func New(repo *repo.Repository, jwtSecret string) *Handler {
 		latencyAlerts:            newLatencyAlertTracker(),
 		notifier:                 newNotifier(),
 		pingSlots:                newNodePingSlots(),
+		statusLive:               newStatusLiveStore(),
+		statusCache:              &statusPageCache{},
+		statusHistory:            &statusHistoryCache{},
+		statusThemes:             &statustheme.Store{},
+		regionNudge:              make(chan struct{}, 1),
 	}
 	h.healthCheck = health.NewChecker(repo, h.wsServer)
 	h.qualityProber = newTunnelQualityProber(h)
@@ -158,8 +176,22 @@ func New(repo *repo.Repository, jwtSecret string) *Handler {
 			UDPConns:         info.UDPConns,
 			NetInSpeed:       info.NetInSpeed,
 			NetOutSpeed:      info.NetOutSpeed,
+			SwapUsage:        swapUsage(info.SwapUsed, info.SwapTotal),
+			ProcessCount:     info.ProcessCount,
 		}
 		h.metrics.RecordNodeMetric(nodeID, metricInfo)
+		if info.Host != nil {
+			h.storeNodeHostFacts(nodeID, info.Host)
+		}
+		h.statusLive.set(nodeID, statusLiveSample{
+			cpu: info.CPUUsage, mem: info.MemoryUsage, disk: info.DiskUsage,
+			load: [3]float64{info.Load1, info.Load5, info.Load15},
+			up:   info.NetOutSpeed, down: info.NetInSpeed, uptime: info.Uptime,
+			tcp: info.TCPConns, udp: info.UDPConns,
+			cores: info.CPUCores, memUsed: info.MemUsed, memTotal: info.MemTotal,
+			diskUsed: info.DiskUsed, diskTotal: info.DiskTotal,
+			swapUsed: info.SwapUsed, swapTotal: info.SwapTotal, procs: info.ProcessCount,
+		})
 	})
 	h.wsServer.SetUserAuthStateLookup(h.GetUserAuthState)
 	return h
@@ -175,6 +207,7 @@ func (h *Handler) GetUserAuthState(userID int64) (*auth.UserAuthState, error) {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/user/login", h.login)
+	mux.HandleFunc("/api/v1/user/login/methods", h.loginMethods)
 	mux.HandleFunc("/api/v1/user/passkey/status", h.passkeyStatus)
 	mux.HandleFunc("/api/v1/user/passkey/login/begin", h.passkeyLoginBegin)
 	mux.HandleFunc("/api/v1/user/passkey/login/finish", h.passkeyLoginFinish)
@@ -189,14 +222,22 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/user/github/bind/begin", h.githubBindBegin)
 	mux.HandleFunc("/api/v1/user/github/bind/finish", h.githubBindFinish)
 	mux.HandleFunc("/api/v1/user/github/unbind", h.githubUnbind)
-	mux.HandleFunc("/api/v1/user/list", h.userList)
-	mux.HandleFunc("/api/v1/user/create", h.userCreate)
-	mux.HandleFunc("/api/v1/user/update", h.userUpdate)
-	mux.HandleFunc("/api/v1/user/delete", h.userDelete)
-	mux.HandleFunc("/api/v1/user/reset", h.userResetFlow)
-	mux.HandleFunc("/api/v1/user/quota/reset", h.userQuotaReset)
-	mux.HandleFunc("/api/v1/user/groups", h.userGroups)
 	mux.HandleFunc("/api/v1/public/config/get", h.getPublicConfigByName)
+	mux.HandleFunc("/api/v1/public/status", h.publicStatus)
+	mux.HandleFunc("/api/v1/public/status/history", h.publicStatusHistory)
+	mux.HandleFunc("/api/v1/public/status/ping-history", h.publicStatusPingHistory)
+	mux.HandleFunc("/status", h.serveStatusTheme)
+	mux.HandleFunc("/status/", h.serveStatusTheme)
+	mux.HandleFunc("/api/v1/status-theme/list", h.statusThemeList)
+	mux.HandleFunc("/api/v1/status-theme/select", h.statusThemeSelect)
+	mux.HandleFunc("/api/v1/status-theme/delete", h.statusThemeDelete)
+	mux.HandleFunc("/api/v1/status-theme/upload", h.statusThemeUpload)
+	mux.HandleFunc("/api/v1/status-theme/install", h.statusThemeInstall)
+	mux.HandleFunc("/api/v1/status-theme/update", h.statusThemeUpdate)
+	mux.HandleFunc("/api/v1/status-theme/preview", h.statusThemePreview)
+	mux.HandleFunc("/api/v1/status-theme/config/get", h.statusThemeConfigGet)
+	mux.HandleFunc("/api/v1/status-theme/config/save", h.statusThemeConfigSave)
+	mux.HandleFunc("/api/v1/public/status/theme-config", h.publicStatusThemeConfig)
 	mux.HandleFunc("/api/v1/config/get", h.getConfigByName)
 	mux.HandleFunc("/api/v1/config/list", h.getConfigs)
 	mux.HandleFunc("/api/v1/config/update", h.updateConfigs)
@@ -218,10 +259,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/api/v1/backup/restore", h.backupImport)
 	mux.HandleFunc("/api/v1/captcha/check", h.checkCaptcha)
 	mux.HandleFunc("/api/v1/captcha/verify", h.captchaVerify)
-	mux.HandleFunc("/api/v1/user/package", h.userPackage)
-	mux.HandleFunc("/api/v1/user/subscription/list", h.userSubscriptionList)
-	mux.HandleFunc("/api/v1/user/subscription/reset", h.userSubscriptionReset)
-	mux.HandleFunc("/api/v1/user/subscription/traffic", h.userSubscriptionTraffic)
 	mux.HandleFunc("/api/v1/user/updatePassword", h.updatePassword)
 	mux.HandleFunc("/api/v1/node/list", h.nodeList)
 	mux.HandleFunc("/api/v1/node/create", h.nodeCreate)
@@ -260,8 +297,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/inbound/batch-toggle", h.inboundBatchToggle)
 	mux.HandleFunc("/api/v1/notify/test", h.notifyTest)
 	mux.HandleFunc("/api/v1/subscription/list", h.subscriptionList)
+	mux.HandleFunc("/api/v1/subscription/rates", h.subscriptionRateStream)
 	mux.HandleFunc("/api/v1/subscription/save", h.subscriptionSave)
 	mux.HandleFunc("/api/v1/subscription/delete", h.subscriptionDelete)
+	mux.HandleFunc("/api/v1/subscription/order", h.subscriptionOrder)
 	mux.HandleFunc("/api/v1/subscription/reset", h.subscriptionReset)
 	mux.HandleFunc("/api/v1/subscription/reset-traffic", h.subscriptionResetTraffic)
 	mux.HandleFunc("/api/v1/subscription/traffic", h.subscriptionTraffic)
@@ -315,10 +354,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/tunnel/update-order", h.tunnelUpdateOrder)
 	mux.HandleFunc("/api/v1/tunnel/batch-delete", h.tunnelBatchDelete)
 	mux.HandleFunc("/api/v1/tunnel/batch-redeploy", h.tunnelBatchRedeploy)
-	mux.HandleFunc("/api/v1/tunnel/user/assign", h.userTunnelAssign)
-	mux.HandleFunc("/api/v1/tunnel/user/batch-assign", h.userTunnelBatchAssign)
-	mux.HandleFunc("/api/v1/tunnel/user/remove", h.userTunnelRemove)
-	mux.HandleFunc("/api/v1/tunnel/user/update", h.userTunnelUpdate)
 	mux.HandleFunc("/api/v1/forward/list", h.forwardList)
 	mux.HandleFunc("/api/v1/forward/create", h.forwardCreate)
 	mux.HandleFunc("/api/v1/forward/update", h.forwardUpdate)
@@ -335,25 +370,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/forward/batch-resume", h.forwardBatchResume)
 	mux.HandleFunc("/api/v1/forward/batch-redeploy", h.forwardBatchRedeploy)
 	mux.HandleFunc("/api/v1/forward/batch-change-tunnel", h.forwardBatchChangeTunnel)
-	mux.HandleFunc("/api/v1/speed-limit/list", h.speedLimitList)
-	mux.HandleFunc("/api/v1/speed-limit/create", h.speedLimitCreate)
-	mux.HandleFunc("/api/v1/speed-limit/update", h.speedLimitUpdate)
-	mux.HandleFunc("/api/v1/speed-limit/delete", h.speedLimitDelete)
 	mux.HandleFunc("/api/v1/tunnel/user/tunnel", h.userTunnelVisibleList)
-	mux.HandleFunc("/api/v1/tunnel/user/list", h.userTunnelList)
-	mux.HandleFunc("/api/v1/group/tunnel/list", h.tunnelGroupList)
-	mux.HandleFunc("/api/v1/group/tunnel/create", h.groupTunnelCreate)
-	mux.HandleFunc("/api/v1/group/tunnel/update", h.groupTunnelUpdate)
-	mux.HandleFunc("/api/v1/group/tunnel/delete", h.groupTunnelDelete)
-	mux.HandleFunc("/api/v1/group/tunnel/assign", h.groupTunnelAssign)
-	mux.HandleFunc("/api/v1/group/user/list", h.userGroupList)
-	mux.HandleFunc("/api/v1/group/user/create", h.groupUserCreate)
-	mux.HandleFunc("/api/v1/group/user/update", h.groupUserUpdate)
-	mux.HandleFunc("/api/v1/group/user/delete", h.groupUserDelete)
-	mux.HandleFunc("/api/v1/group/user/assign", h.groupUserAssign)
-	mux.HandleFunc("/api/v1/group/permission/list", h.groupPermissionList)
-	mux.HandleFunc("/api/v1/group/permission/assign", h.groupPermissionAssign)
-	mux.HandleFunc("/api/v1/group/permission/remove", h.groupPermissionRemove)
 	mux.HandleFunc("/api/v1/open_api/sub_store", h.openAPISubStore)
 	mux.HandleFunc("/api/v1/federation/share/list", h.federationShareList)
 	mux.HandleFunc("/api/v1/federation/share/create", h.federationShareCreate)
@@ -369,11 +386,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/federation/runtime/diagnose", h.authPeer(h.federationRuntimeDiagnose))
 	mux.HandleFunc("/api/v1/federation/runtime/command", h.authPeer(h.federationRuntimeCommand))
 	mux.HandleFunc("/api/v1/federation/node/import", h.nodeImport)
-	mux.HandleFunc("/api/v1/announcement/get", h.getAnnouncement)
-	mux.HandleFunc("/api/v1/announcement/update", h.updateAnnouncement)
 
-	mux.HandleFunc("/api/v1/monitor/access", h.monitorAccessHandler)
 	mux.HandleFunc("/api/v1/node/traffic/month", h.nodeTrafficMonth)
+	mux.HandleFunc("/api/v1/node/billing", h.nodeBilling)
 	mux.HandleFunc("/api/v1/monitor/nodes/", h.monitorNodeMetricsHandler)
 	mux.HandleFunc("/api/v1/monitor/nodes", h.monitorNodeListHandler)
 	mux.HandleFunc("/api/v1/monitor/tunnels", h.monitorTunnelListHandler)
@@ -387,9 +402,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/monitor/services/latest-results", h.monitorServiceLatestResultsHandler)
 	mux.HandleFunc("/api/v1/monitor/services/limits", h.monitorServiceLimitsHandler)
 	mux.HandleFunc("/api/v1/monitor/services/", h.monitorServiceResultsHandler)
-	mux.HandleFunc("/api/v1/monitor/permission/list", h.monitorPermissionList)
-	mux.HandleFunc("/api/v1/monitor/permission/assign", h.monitorPermissionAssign)
-	mux.HandleFunc("/api/v1/monitor/permission/remove", h.monitorPermissionRemove)
 
 	mux.HandleFunc("/flow/test", h.flowTest)
 	mux.HandleFunc("/flow/config", h.flowConfig)
@@ -463,9 +475,13 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("账号被停用"))
 		return
 	}
-	// Checked after the password so it doesn't reveal which names are admins.
-	if user.RoleID == 0 && h.adminPasswordLoginDisabled() {
-		response.WriteJSON(w, response.ErrDefault("管理员已禁止使用密码登录，请使用 GitHub 或通行证密钥登录"))
+	// Checked after the password so it doesn't reveal which names exist.
+	if user.RoleID != 0 {
+		response.WriteJSON(w, response.ErrDefault("只有管理员可以登录"))
+		return
+	}
+	if h.adminPasswordLoginDisabled() {
+		response.WriteJSON(w, response.ErrDefault("已禁止密码登录，请使用 GitHub 或通行证密钥登录"))
 		return
 	}
 	issueAt := time.Now()
@@ -512,7 +528,8 @@ func (h *Handler) getConfigByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	configName := strings.ToLower(strings.TrimSpace(req.Name))
-	if configName == "license_key" || configName == "license_machine_id" || configName == "machine_fingerprint" {
+	if configName == "license_key" || configName == "license_machine_id" || configName == "machine_fingerprint" ||
+		configName == gistConfigToken || configName == gistConfigPassword || configName == githubTokenConfig {
 		response.WriteJSON(w, response.Err(403, "禁止访问系统授权凭据"))
 		return
 	}
@@ -561,45 +578,8 @@ func (h *Handler) getConfigs(w http.ResponseWriter, r *http.Request) {
 	// The Gist token and password are never sent back, to admins either.
 	delete(cfgMap, gistConfigToken)
 	delete(cfgMap, gistConfigPassword)
+	delete(cfgMap, githubTokenConfig)
 	response.WriteJSON(w, response.OK(cfgMap))
-}
-
-func (h *Handler) userList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	var req struct {
-		Current int    `json:"current"`
-		Size    int    `json:"size"`
-		Keyword string `json:"keyword"`
-	}
-	if err := decodeJSON(r.Body, &req); err != nil && err != io.EOF {
-		response.WriteJSON(w, response.ErrDefault("请求参数错误"))
-		return
-	}
-
-	users, err := h.repo.ListUsers()
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-
-	keyword := strings.ToLower(strings.TrimSpace(req.Keyword))
-	if keyword != "" {
-		filtered := make([]map[string]interface{}, 0, len(users))
-		for _, item := range users {
-			username := strings.ToLower(strings.TrimSpace(fmt.Sprint(item["user"])))
-			displayName := strings.ToLower(strings.TrimSpace(fmt.Sprint(item["name"])))
-			if strings.Contains(username, keyword) || strings.Contains(displayName, keyword) {
-				filtered = append(filtered, item)
-			}
-		}
-		users = filtered
-	}
-
-	response.WriteJSON(w, response.OK(users))
 }
 
 func (h *Handler) nodeList(w http.ResponseWriter, r *http.Request) {
@@ -615,8 +595,11 @@ func (h *Handler) nodeList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.syncRemoteNodeStatuses(items)
+	hiddenCfg, _ := h.repo.GetConfigsByNames([]string{statusPageHiddenNodesKey})
+	hidden := parseStatusHiddenNodes(hiddenCfg[statusPageHiddenNodesKey])
 	for _, item := range items {
 		id := asInt64(item["id"], 0)
+		item["statusVisible"] = !hidden[id]
 		item["notifyEvents"] = parseNodeNotifyEvents(asString(item["notifyEvents"]))
 		if c := parseNodeTargetChoice(asString(item["latencyTargets"])); c != nil {
 			item["latencyTargets"] = c
@@ -671,20 +654,6 @@ func (h *Handler) forwardList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		items = filtered
-	}
-	response.WriteJSON(w, response.OK(items))
-}
-
-func (h *Handler) speedLimitList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	items, err := h.repo.ListSpeedLimits()
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
 	}
 	response.WriteJSON(w, response.OK(items))
 }
@@ -792,114 +761,7 @@ func (h *Handler) userTunnelVisibleList(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	userID, roleID, err := userRoleFromRequest(r)
-	if err != nil {
-		response.WriteJSON(w, response.Err(401, "无效的token或token已过期"))
-		return
-	}
-
-	items := make([]map[string]interface{}, 0)
-	if roleID == 0 {
-		items, err = h.repo.ListEnabledTunnelSummaries()
-	} else {
-		items, err = h.repo.ListUserAccessibleTunnels(userID)
-	}
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-	response.WriteJSON(w, response.OK(items))
-}
-
-func (h *Handler) userTunnelList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	var req struct {
-		UserID int64 `json:"userId"`
-	}
-	if err := decodeJSON(r.Body, &req); err != nil {
-		response.WriteJSON(w, response.ErrDefault("请求参数错误"))
-		return
-	}
-	if req.UserID <= 0 {
-		response.WriteJSON(w, response.OK([]interface{}{}))
-		return
-	}
-
-	tunnels, err := h.repo.GetUserPackageTunnels(req.UserID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-
-	out := make([]map[string]interface{}, 0, len(tunnels))
-	for _, t := range tunnels {
-		item := map[string]interface{}{
-			"id":             t.ID,
-			"userId":         t.UserID,
-			"tunnelId":       t.TunnelID,
-			"tunnelName":     t.TunnelName,
-			"status":         t.Status,
-			"flow":           t.Flow,
-			"flowMiB":        t.FlowMiB,
-			"num":            t.Num,
-			"expTime":        t.ExpTime,
-			"flowResetTime":  t.FlowResetTime,
-			"inFlow":         t.InFlow,
-			"outFlow":        t.OutFlow,
-			"tunnelFlow":     t.TunnelFlow,
-			"speedId":        nil,
-			"speedLimitName": nil,
-		}
-		if t.SpeedID.Valid {
-			item["speedId"] = t.SpeedID.Int64
-		}
-		if t.SpeedLimit.Valid {
-			item["speedLimitName"] = t.SpeedLimit.String
-		}
-		out = append(out, item)
-	}
-	response.WriteJSON(w, response.OK(out))
-}
-
-func (h *Handler) tunnelGroupList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	items, err := h.repo.ListTunnelGroups()
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-	response.WriteJSON(w, response.OK(items))
-}
-
-func (h *Handler) userGroupList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	items, err := h.repo.ListUserGroups()
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-	response.WriteJSON(w, response.OK(items))
-}
-
-func (h *Handler) groupPermissionList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	items, err := h.repo.ListGroupPermissions()
+	items, err := h.repo.ListEnabledTunnelSummaries()
 	if err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
@@ -1163,143 +1025,6 @@ func (h *Handler) isTunnelQualityMonitoringEnabled() bool {
 	}
 
 	return strings.TrimSpace(strings.ToLower(cfg.Value)) != "false"
-}
-
-func (h *Handler) allowLocalRemoteAddr() bool {
-	if h == nil || h.repo == nil {
-		return false
-	}
-
-	cfg, err := h.repo.GetConfigByName(allowLocalRemoteAddrConfigKey)
-	if err != nil || cfg == nil {
-		return false
-	}
-
-	return strings.TrimSpace(strings.ToLower(cfg.Value)) == "true"
-}
-
-func (h *Handler) userPackage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	claims, ok := r.Context().Value(middleware.ClaimsContextKey).(auth.Claims)
-	if !ok {
-		response.WriteJSON(w, response.Err(401, "无效的token或token已过期"))
-		return
-	}
-
-	userID, err := parseUserID(claims.Sub)
-	if err != nil {
-		response.WriteJSON(w, response.Err(401, "无效的token或token已过期"))
-		return
-	}
-
-	user, err := h.repo.GetUserByID(userID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-	if user == nil {
-		response.WriteJSON(w, response.ErrDefault("用户不存在"))
-		return
-	}
-
-	tunnels, err := h.repo.GetUserPackageTunnels(userID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-
-	forwards, err := h.repo.GetUserPackageForwards(userID)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-
-	stats, err := h.repo.GetStatisticsFlows(userID, 24)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
-
-	sort.Slice(stats, func(i, j int) bool { return stats[i].ID < stats[j].ID })
-
-	tunnelOut := make([]map[string]interface{}, 0, len(tunnels))
-	for _, t := range tunnels {
-		item := map[string]interface{}{
-			"id":             t.ID,
-			"userId":         t.UserID,
-			"tunnelId":       t.TunnelID,
-			"tunnelName":     t.TunnelName,
-			"tunnelFlow":     t.TunnelFlow,
-			"flow":           t.Flow,
-			"flowMiB":        t.FlowMiB,
-			"inFlow":         t.InFlow,
-			"outFlow":        t.OutFlow,
-			"num":            t.Num,
-			"flowResetTime":  t.FlowResetTime,
-			"expTime":        t.ExpTime,
-			"speedId":        nil,
-			"speedLimitName": nil,
-			"speed":          nil,
-		}
-		if t.SpeedID.Valid {
-			item["speedId"] = t.SpeedID.Int64
-		}
-		if t.SpeedLimit.Valid {
-			item["speedLimitName"] = t.SpeedLimit.String
-		}
-		if t.Speed.Valid {
-			item["speed"] = t.Speed.Int64
-		}
-		tunnelOut = append(tunnelOut, item)
-	}
-
-	forwardOut := make([]map[string]interface{}, 0, len(forwards))
-	for _, f := range forwards {
-		item := map[string]interface{}{
-			"id":          f.ID,
-			"name":        f.Name,
-			"tunnelId":    f.TunnelID,
-			"tunnelName":  f.TunnelName,
-			"inIp":        f.InIP,
-			"inPort":      nil,
-			"remoteAddr":  f.RemoteAddr,
-			"inFlow":      f.InFlow,
-			"outFlow":     f.OutFlow,
-			"status":      f.Status,
-			"createdTime": f.CreatedAt,
-		}
-		if f.InPort.Valid {
-			item["inPort"] = f.InPort.Int64
-		}
-		forwardOut = append(forwardOut, item)
-	}
-
-	payload := map[string]interface{}{
-		"userInfo": map[string]interface{}{
-			"id":            user.ID,
-			"name":          user.User,
-			"user":          user.User,
-			"status":        user.Status,
-			"flow":          user.Flow,
-			"flowMiB":       user.FlowMiB,
-			"inFlow":        user.InFlow,
-			"outFlow":       user.OutFlow,
-			"num":           user.Num,
-			"expTime":       user.ExpTime,
-			"flowResetTime": user.FlowResetTime,
-			"createdTime":   user.CreatedTime,
-			"updatedTime":   nullableNullInt64(user.UpdatedTime),
-		},
-		"tunnelPermissions": tunnelOut,
-		"forwards":          forwardOut,
-		"statisticsFlows":   stats,
-	}
-
-	response.WriteJSON(w, response.OK(payload))
 }
 
 func (h *Handler) updatePassword(w http.ResponseWriter, r *http.Request) {
@@ -1685,61 +1410,4 @@ func (h *Handler) reconcileAllKernelsAfterImport(result *repo.ImportResult, back
 			h.reconcileNodeKernels(nodeID)
 		}
 	}()
-}
-
-func (h *Handler) getAnnouncement(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	ann, err := h.repo.GetAnnouncement()
-	if err != nil {
-		response.WriteJSON(w, response.Err(-1, fmt.Sprintf("获取公告失败: %v", err)))
-		return
-	}
-
-	if ann == nil {
-		response.WriteJSON(w, response.OK(map[string]interface{}{
-			"content":     "",
-			"enabled":     0,
-			"update_time": 0,
-		}))
-		return
-	}
-
-	updateTime := ann.CreatedTime
-	if ann.UpdatedTime.Valid {
-		updateTime = ann.UpdatedTime.Int64
-	}
-
-	response.WriteJSON(w, response.OK(map[string]interface{}{
-		"content":     ann.Content,
-		"enabled":     ann.Enabled,
-		"update_time": updateTime,
-	}))
-}
-
-func (h *Handler) updateAnnouncement(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.WriteJSON(w, response.ErrDefault("请求失败"))
-		return
-	}
-
-	var req struct {
-		Content string `json:"content"`
-		Enabled int    `json:"enabled"`
-	}
-	if err := decodeJSON(r.Body, &req); err != nil {
-		response.WriteJSON(w, response.Err(500, "请求参数错误"))
-		return
-	}
-
-	now := time.Now().UnixMilli()
-	if err := h.repo.UpsertAnnouncement(req.Content, req.Enabled, now); err != nil {
-		response.WriteJSON(w, response.Err(-1, fmt.Sprintf("更新公告失败: %v", err)))
-		return
-	}
-
-	response.WriteJSON(w, response.OKEmpty())
 }

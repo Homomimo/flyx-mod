@@ -19,6 +19,7 @@ var publicConfigKeys = map[string]struct{}{
 	"cloudflare_site_key": {},
 	"is_commercial":       {},
 	"hide_footer_brand":   {},
+	"status_page_enabled": {},
 }
 
 var sensitiveConfigKeys = map[string]struct{}{
@@ -37,6 +38,9 @@ var sensitiveConfigKeys = map[string]struct{}{
 	// The Gist backup's credentials.
 	"gist_token":    {},
 	"gist_password": {},
+	// Read a private release repository; set in 设置 up to 3.9.2, now only
+	// GITHUB_TOKEN is used (github_token.go). A stored value stays hidden.
+	"github_token": {},
 }
 
 var systemManagedConfigKeys = map[string]struct{}{
@@ -56,6 +60,8 @@ var systemManagedConfigKeys = map[string]struct{}{
 	"gist_last_upload":    {},
 	"gist_last_error":     {},
 	"gist_last_hash":      {},
+	// Left from 3.9.2 and earlier: never sent back nor backed up.
+	"github_token": {},
 }
 
 func PolicyForConfig(name string) ConfigAccessPolicy {

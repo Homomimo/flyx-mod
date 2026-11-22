@@ -21,9 +21,6 @@ func TestPostgresReliableTrafficTransactions(t *testing.T) {
 			if err := tx.ApplyFlowUploadDeltasBatchAt([]FlowUploadCounterDelta{{UserID: id, InFlow: amount}}, now); err != nil {
 				return err
 			}
-			if _, err := tx.AddUserQuotaUsage(id, amount, now); err != nil {
-				return err
-			}
 			if fail {
 				return errors.New("injected transaction failure")
 			}
@@ -50,12 +47,8 @@ func TestPostgresReliableTrafficTransactions(t *testing.T) {
 		if err := r.DB().First(&user, id).Error; err != nil {
 			t.Fatal(err)
 		}
-		quota, err := r.GetUserQuotaView(id, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if user.InFlow != want || quota.DailyUsedBytes != want {
-			t.Fatalf("flow=%d quota=%d want=%d", user.InFlow, quota.DailyUsedBytes, want)
+		if user.InFlow != want {
+			t.Fatalf("flow=%d want=%d", user.InFlow, want)
 		}
 	}
 	check(100)

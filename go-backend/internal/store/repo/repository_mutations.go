@@ -14,28 +14,7 @@ import (
 	"go-backend/internal/store/model"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
-
-func (r *Repository) UserExists(username string) (bool, error) {
-	if r == nil || r.db == nil {
-		return false, errors.New("repository not initialized")
-	}
-	var cnt int64
-	err := r.db.Model(&model.User{}).Where(`"user" = ?`, username).Count(&cnt).Error
-	return cnt > 0, err
-}
-
-func (r *Repository) UserExistsExcluding(username string, excludeID int64) (bool, error) {
-	if r == nil || r.db == nil {
-		return false, errors.New("repository not initialized")
-	}
-	var cnt int64
-	err := r.db.Model(&model.User{}).
-		Where(`"user" = ? AND id != ?`, username, excludeID).
-		Count(&cnt).Error
-	return cnt > 0, err
-}
 
 func optionalFlowMiB(values []int64) int64 {
 	if len(values) > 0 {
@@ -72,58 +51,6 @@ func (r *Repository) CreateUser(username, pwdHash string, roleID int, expTime, f
 	return user.ID, nil
 }
 
-func (r *Repository) GetUserRoleID(userID int64) (int, error) {
-	if r == nil || r.db == nil {
-		return 0, errors.New("repository not initialized")
-	}
-	var user model.User
-	err := r.db.Select("role_id").Where("id = ?", userID).First(&user).Error
-	if err != nil {
-		return 0, normalizeNotFoundErr(err)
-	}
-	return user.RoleID, nil
-}
-
-func (r *Repository) UpdateUserWithPassword(id int64, username, pwdHash string, flow int64, num int, expTime, flowResetTime int64, status, maxConn int, now int64, flowMiB ...int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Model(&model.User{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"user":                username,
-			"pwd":                 pwdHash,
-			"flow":                flow,
-			"flow_mib":            optionalFlowMiB(flowMiB),
-			"num":                 num,
-			"exp_time":            expTime,
-			"flow_reset_time":     flowResetTime,
-			"status":              status,
-			"max_conn":            maxConn,
-			"password_changed_at": now,
-			"updated_time":        sql.NullInt64{Int64: now, Valid: true},
-		}).Error
-}
-
-func (r *Repository) UpdateUserWithoutPassword(id int64, username string, flow int64, num int, expTime, flowResetTime int64, status, maxConn int, now int64, flowMiB ...int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Model(&model.User{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"user":            username,
-			"flow":            flow,
-			"flow_mib":        optionalFlowMiB(flowMiB),
-			"num":             num,
-			"exp_time":        expTime,
-			"flow_reset_time": flowResetTime,
-			"status":          status,
-			"max_conn":        maxConn,
-			"updated_time":    sql.NullInt64{Int64: now, Valid: true},
-		}).Error
-}
-
 func (r *Repository) UpdateUserPassword(userID int64, pwdHash string, now int64) error {
 	if r == nil || r.db == nil {
 		return errors.New("repository not initialized")
@@ -135,89 +62,6 @@ func (r *Repository) UpdateUserPassword(userID int64, pwdHash string, now int64)
 			"password_changed_at": now,
 			"updated_time":        sql.NullInt64{Int64: now, Valid: true},
 		}).Error
-}
-
-func (r *Repository) PropagateUserFlowToTunnels(userID int64, flow int64, num int, expTime, flowResetTime int64, flowMiB ...int64) {
-	if r == nil || r.db == nil {
-		return
-	}
-	_ = r.db.Model(&model.UserTunnel{}).
-		Where("user_id = ?", userID).
-		Updates(map[string]interface{}{
-			"flow":            flow,
-			"flow_mib":        optionalFlowMiB(flowMiB),
-			"num":             num,
-			"exp_time":        expTime,
-			"flow_reset_time": flowResetTime,
-		}).Error
-}
-
-func (r *Repository) DeleteUserCascade(userID int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("user_id = ?", userID).Delete(&model.Passkey{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("user_id = ?", userID).Delete(&model.UserGithub{}).Error; err != nil {
-			return err
-		}
-		forwardIDs := tx.Model(&model.Forward{}).Select("id").Where("user_id = ?", userID)
-		if err := tx.Where("forward_id IN (?)", forwardIDs).Delete(&model.ForwardPort{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("user_id = ?", userID).Delete(&model.Forward{}).Error; err != nil {
-			return err
-		}
-		userTunnelIDs := tx.Model(&model.UserTunnel{}).Select("id").Where("user_id = ?", userID)
-		if err := tx.Where("user_tunnel_id IN (?)", userTunnelIDs).Delete(&model.GroupPermissionGrant{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("user_id = ?", userID).Delete(&model.UserTunnel{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("user_id = ?", userID).Delete(&model.UserGroupUser{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("user_id = ?", userID).Delete(&model.StatisticsFlow{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("user_id = ?", userID).Delete(&model.UserQuota{}).Error; err != nil {
-			return err
-		}
-		// Assigned subscriptions stay (they may be in use); they just
-		// become unassigned.
-		if err := tx.Model(&model.Subscription{}).Where("user_id = ?", userID).Update("user_id", 0).Error; err != nil {
-			return err
-		}
-		return tx.Where("id = ?", userID).Delete(&model.User{}).Error
-	})
-}
-
-func (r *Repository) ResetUserFlowByUser(userID int64, now int64) {
-	if r == nil || r.db == nil {
-		return
-	}
-	_ = r.db.Model(&model.User{}).
-		Where("id = ?", userID).
-		Updates(map[string]interface{}{
-			"in_flow":      0,
-			"out_flow":     0,
-			"updated_time": sql.NullInt64{Int64: now, Valid: true},
-		}).Error
-	_ = r.db.Model(&model.UserTunnel{}).
-		Where("user_id = ?", userID).
-		Updates(map[string]interface{}{"in_flow": 0, "out_flow": 0}).Error
-}
-
-func (r *Repository) ResetUserFlowByUserTunnel(userTunnelID int64) {
-	if r == nil || r.db == nil {
-		return
-	}
-	_ = r.db.Model(&model.UserTunnel{}).
-		Where("id = ?", userTunnelID).
-		Updates(map[string]interface{}{"in_flow": 0, "out_flow": 0}).Error
 }
 
 func (r *Repository) ResetForwardFlow(forwardID int64, now int64) error {
@@ -242,18 +86,6 @@ func (r *Repository) GetUsernameByID(userID int64) string {
 		return ""
 	}
 	return user.User
-}
-
-func (r *Repository) GetUserDefaultsForTunnel(userID int64) (flow int64, num int, expTime int64, flowReset int64, err error) {
-	if r == nil || r.db == nil {
-		return 0, 0, 0, 0, errors.New("repository not initialized")
-	}
-	var user model.User
-	err = r.db.Select("flow", "num", "exp_time", "flow_reset_time").Where("id = ?", userID).First(&user).Error
-	if err != nil {
-		return 0, 0, 0, 0, normalizeNotFoundErr(err)
-	}
-	return user.Flow, user.Num, user.ExpTime, user.FlowResetTime, nil
 }
 
 func (r *Repository) CreateNode(name, secret, serverIP string, serverIPV4, serverIPV6, port, interfaceName, version, remark, expiryTime, renewalCycle interface{}, httpFlag, tlsFlag, socksFlag int, now int64, status int, tcpAddr, udpAddr string, inx, isRemote int, remoteURL, remoteToken, remoteConfig, extraIPs interface{}, forwardMode string, notifyEvents *string) error {
@@ -694,94 +526,6 @@ func (r *Repository) TunnelEntryNodeIDs(tunnelID int64) ([]int64, error) {
 	return ids, nil
 }
 
-func (r *Repository) DeleteUserTunnel(id int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Where("id = ?", id).Delete(&model.UserTunnel{}).Error
-}
-
-func (r *Repository) UpdateUserTunnel(id int64, flow int64, num int, expTime, flowResetTime int64, speedID interface{}, status int, flowMiB ...int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Model(&model.UserTunnel{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"flow":            flow,
-			"flow_mib":        optionalFlowMiB(flowMiB),
-			"num":             num,
-			"exp_time":        expTime,
-			"flow_reset_time": flowResetTime,
-			"speed_id":        nullInt64FromInterface(speedID),
-			"status":          status,
-		}).Error
-}
-
-func (r *Repository) GetUserTunnelUserAndTunnel(id int64) (userID, tunnelID int64, err error) {
-	if r == nil || r.db == nil {
-		return 0, 0, errors.New("repository not initialized")
-	}
-	var ut model.UserTunnel
-	err = r.db.Select("user_id", "tunnel_id").Where("id = ?", id).First(&ut).Error
-	if err != nil {
-		return 0, 0, normalizeNotFoundErr(err)
-	}
-	return ut.UserID, ut.TunnelID, nil
-}
-
-func (r *Repository) GetExistingUserTunnel(userID, tunnelID int64) (id int64, flow, num, expTime, flowReset int64, speedID sql.NullInt64, status int, err error) {
-	if r == nil || r.db == nil {
-		return 0, 0, 0, 0, 0, sql.NullInt64{}, 0, errors.New("repository not initialized")
-	}
-	var ut model.UserTunnel
-	err = r.db.Select("id", "flow", "num", "exp_time", "flow_reset_time", "speed_id", "status").
-		Where("user_id = ? AND tunnel_id = ?", userID, tunnelID).
-		First(&ut).Error
-	if err != nil {
-		return 0, 0, 0, 0, 0, sql.NullInt64{}, 0, normalizeNotFoundErr(err)
-	}
-	return ut.ID, ut.Flow, int64(ut.Num), ut.ExpTime, ut.FlowResetTime, ut.SpeedID, ut.Status, nil
-}
-
-func (r *Repository) InsertUserTunnel(userID, tunnelID int64, speedID interface{}, num int, flow, flowResetTime, expTime int64, status int, flowMiB ...int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	ut := model.UserTunnel{
-		UserID:        userID,
-		TunnelID:      tunnelID,
-		SpeedID:       nullInt64FromInterface(speedID),
-		Num:           num,
-		Flow:          flow,
-		FlowMiB:       optionalFlowMiB(flowMiB),
-		InFlow:        0,
-		OutFlow:       0,
-		FlowResetTime: flowResetTime,
-		FlowResetAt:   time.Now().UnixMilli(),
-		ExpTime:       expTime,
-		Status:        status,
-	}
-	return r.db.Create(&ut).Error
-}
-
-func (r *Repository) UpdateUserTunnelFields(id int64, speedID interface{}, flow int64, num int, expTime, flowResetTime int64, status int, flowMiB ...int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Model(&model.UserTunnel{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"speed_id":        nullInt64FromInterface(speedID),
-			"flow":            flow,
-			"flow_mib":        optionalFlowMiB(flowMiB),
-			"num":             num,
-			"exp_time":        expTime,
-			"flow_reset_time": flowResetTime,
-			"status":          status,
-		}).Error
-}
-
 func (r *Repository) GetMinForwardPort(forwardID int64) sql.NullInt64 {
 	if r == nil || r.db == nil {
 		return sql.NullInt64{}
@@ -794,7 +538,9 @@ func (r *Repository) GetMinForwardPort(forwardID int64) sql.NullInt64 {
 	return p
 }
 
-func (r *Repository) UpdateForward(id int64, name string, tunnelID int64, remoteAddr, strategy string, now int64, speedID interface{}, maxConn int, ipMaxConn int, ipSpeedID interface{}, proxyProtocol int, proxyProtocolReceive int, proxyProtocolSend int) error {
+// UpdateForward saves a forward. Speed and connection limits are gone: any an
+// older version stored are cleared.
+func (r *Repository) UpdateForward(id int64, name string, tunnelID int64, remoteAddr, strategy string, now int64, proxyProtocol int, proxyProtocolReceive int, proxyProtocolSend int) error {
 	if r == nil || r.db == nil {
 		return errors.New("repository not initialized")
 	}
@@ -806,10 +552,10 @@ func (r *Repository) UpdateForward(id int64, name string, tunnelID int64, remote
 			"tunnel_id":              tunnelID,
 			"remote_addr":            remoteAddr,
 			"strategy":               strategy,
-			"speed_id":               nullInt64FromInterface(speedID),
-			"max_conn":               maxConn,
-			"ip_max_conn":            ipMaxConn,
-			"ip_speed_id":            nullInt64FromInterface(ipSpeedID),
+			"speed_id":               nil,
+			"max_conn":               0,
+			"ip_max_conn":            0,
+			"ip_speed_id":            nil,
 			"proxy_protocol":         proxyProtocol,
 			"proxy_protocol_receive": proxyProtocolReceive,
 			"proxy_protocol_send":    proxyProtocolSend,
@@ -941,339 +687,11 @@ func (r *Repository) GetUsedPortsOnNodeAsMap(nodeID int64) (map[int]bool, error)
 	return used, nil
 }
 
-func (r *Repository) CreateSpeedLimit(name string, speed int, now int64, status int) (int64, error) {
-	if r == nil || r.db == nil {
-		return 0, errors.New("repository not initialized")
-	}
-	sl := model.SpeedLimit{
-		Name:        name,
-		Speed:       speed,
-		TunnelID:    sql.NullInt64{Int64: 0, Valid: false},
-		TunnelName:  sql.NullString{String: "", Valid: false},
-		CreatedTime: now,
-		UpdatedTime: sql.NullInt64{Int64: now, Valid: true},
-		Status:      status,
-	}
-	if err := r.db.Create(&sl).Error; err != nil {
-		return 0, err
-	}
-	return sl.ID, nil
-}
-
-func (r *Repository) UpdateSpeedLimit(id int64, name string, speed int, status int, now int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	updates := map[string]interface{}{
-		"name":        name,
-		"speed":       speed,
-		"status":      status,
-		"tunnel_id":   nil,
-		"tunnel_name": nil,
-		"updated_time": sql.NullInt64{
-			Int64: now,
-			Valid: true,
-		},
-	}
-	return r.db.Model(&model.SpeedLimit{}).
-		Where("id = ?", id).
-		Updates(updates).Error
-}
-
-func (r *Repository) DeleteSpeedLimit(id int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Where("id = ?", id).Delete(&model.SpeedLimit{}).Error
-}
-
-func (r *Repository) GroupCreate(table, name string, status int, now int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	switch table {
-	case "tunnel_group":
-		return r.db.Create(&model.TunnelGroup{
-			Name:        name,
-			CreatedTime: now,
-			UpdatedTime: now,
-			Status:      status,
-		}).Error
-	case "user_group":
-		return r.db.Create(&model.UserGroup{
-			Name:        name,
-			CreatedTime: now,
-			UpdatedTime: now,
-			Status:      status,
-		}).Error
-	default:
-		return errors.New("invalid group table")
-	}
-}
-
-func (r *Repository) GroupUpdate(table string, id int64, name string, status int, now int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	updates := map[string]interface{}{"name": name, "status": status, "updated_time": now}
-	switch table {
-	case "tunnel_group":
-		return r.db.Model(&model.TunnelGroup{}).Where("id = ?", id).Updates(updates).Error
-	case "user_group":
-		return r.db.Model(&model.UserGroup{}).Where("id = ?", id).Updates(updates).Error
-	default:
-		return errors.New("invalid group table")
-	}
-}
-
-func (r *Repository) GroupDeleteCascade(table string, id int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		switch table {
-		case "tunnel_group":
-			if err := tx.Where("tunnel_group_id = ?", id).Delete(&model.TunnelGroupTunnel{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("tunnel_group_id = ?", id).Delete(&model.GroupPermission{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("tunnel_group_id = ?", id).Delete(&model.GroupPermissionGrant{}).Error; err != nil {
-				return err
-			}
-			return tx.Where("id = ?", id).Delete(&model.TunnelGroup{}).Error
-		case "user_group":
-			if err := tx.Where("user_group_id = ?", id).Delete(&model.UserGroupUser{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("user_group_id = ?", id).Delete(&model.GroupPermission{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("user_group_id = ?", id).Delete(&model.GroupPermissionGrant{}).Error; err != nil {
-				return err
-			}
-			return tx.Where("id = ?", id).Delete(&model.UserGroup{}).Error
-		default:
-			return errors.New("invalid group table")
-		}
-	})
-}
-
-func (r *Repository) ListUserIDsByUserGroupTx(tx *gorm.DB, userGroupID int64) ([]int64, error) {
-	if tx == nil {
-		return nil, errors.New("database unavailable")
-	}
-	var ids []int64
-	err := tx.Model(&model.UserGroupUser{}).
-		Where("user_group_id = ?", userGroupID).
-		Pluck("user_id", &ids).Error
-	if err != nil {
-		return nil, err
-	}
-	if ids == nil {
-		ids = make([]int64, 0)
-	}
-	return ids, nil
-}
-
-func (r *Repository) ReplaceTunnelGroupMembersTx(tx *gorm.DB, groupID int64, tunnelIDs []int64, now int64) error {
-	if tx == nil {
-		return errors.New("database unavailable")
-	}
-	if err := tx.Where("tunnel_group_id = ?", groupID).Delete(&model.TunnelGroupTunnel{}).Error; err != nil {
-		return err
-	}
-	if len(tunnelIDs) == 0 {
-		return nil
-	}
-	rows := make([]model.TunnelGroupTunnel, 0, len(tunnelIDs))
-	for _, tunnelID := range tunnelIDs {
-		if tunnelID <= 0 {
-			continue
-		}
-		rows = append(rows, model.TunnelGroupTunnel{TunnelGroupID: groupID, TunnelID: tunnelID, CreatedTime: now})
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
-}
-
-func (r *Repository) ReplaceUserGroupMembersTx(tx *gorm.DB, groupID int64, userIDs []int64, now int64) error {
-	if tx == nil {
-		return errors.New("database unavailable")
-	}
-	if err := tx.Where("user_group_id = ?", groupID).Delete(&model.UserGroupUser{}).Error; err != nil {
-		return err
-	}
-	if len(userIDs) == 0 {
-		return nil
-	}
-	rows := make([]model.UserGroupUser, 0, len(userIDs))
-	for _, userID := range userIDs {
-		if userID <= 0 {
-			continue
-		}
-		rows = append(rows, model.UserGroupUser{UserGroupID: groupID, UserID: userID, CreatedTime: now})
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
-}
-
-func (r *Repository) GetGroupPermissionPairByIDTx(tx *gorm.DB, id int64) (userGroupID int64, tunnelGroupID int64, exists bool, err error) {
-	if tx == nil {
-		return 0, 0, false, errors.New("database unavailable")
-	}
-	var gp model.GroupPermission
-	err = tx.Select("user_group_id", "tunnel_group_id").Where("id = ?", id).First(&gp).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return 0, 0, false, nil
-	}
-	if err != nil {
-		return 0, 0, false, err
-	}
-	return gp.UserGroupID, gp.TunnelGroupID, true, nil
-}
-
-func (r *Repository) DeleteGroupPermissionByIDTx(tx *gorm.DB, id int64) error {
-	if tx == nil {
-		return errors.New("database unavailable")
-	}
-	return tx.Where("id = ?", id).Delete(&model.GroupPermission{}).Error
-}
-
 // RevokedUserTunnelPair holds the (userID, tunnelID) of a deleted user_tunnel row,
 // so the handler layer can clean up associated forwarding rules.
 type RevokedUserTunnelPair struct {
 	UserID   int64
 	TunnelID int64
-}
-
-func (r *Repository) RevokeGroupGrantsForRemovedUsersTx(tx *gorm.DB, userGroupID int64, previousUserIDs, currentUserIDs []int64) ([]RevokedUserTunnelPair, error) {
-	if tx == nil {
-		return nil, errors.New("database unavailable")
-	}
-	currentSet := make(map[int64]struct{}, len(currentUserIDs))
-	for _, uid := range currentUserIDs {
-		if uid > 0 {
-			currentSet[uid] = struct{}{}
-		}
-	}
-
-	removedUserIDs := make([]int64, 0)
-	for _, uid := range previousUserIDs {
-		if uid <= 0 {
-			continue
-		}
-		if _, ok := currentSet[uid]; !ok {
-			removedUserIDs = append(removedUserIDs, uid)
-		}
-	}
-	if len(removedUserIDs) == 0 {
-		return nil, nil
-	}
-
-	type grantRow struct {
-		UserTunnelID   int64
-		CreatedByGroup int
-	}
-
-	var revoked []RevokedUserTunnelPair
-
-	for _, userID := range removedUserIDs {
-		var rows []grantRow
-		if err := tx.Model(&model.GroupPermissionGrant{}).
-			Select("group_permission_grant.user_tunnel_id, group_permission_grant.created_by_group").
-			Joins("JOIN user_tunnel ON user_tunnel.id = group_permission_grant.user_tunnel_id").
-			Where("group_permission_grant.user_group_id = ? AND user_tunnel.user_id = ?", userGroupID, userID).
-			Find(&rows).Error; err != nil {
-			return revoked, err
-		}
-
-		groupCreatedTunnelIDs := make(map[int64]struct{})
-		for _, row := range rows {
-			if row.CreatedByGroup == 1 && row.UserTunnelID > 0 {
-				groupCreatedTunnelIDs[row.UserTunnelID] = struct{}{}
-			}
-		}
-
-		userTunnelIDs := tx.Model(&model.UserTunnel{}).Select("id").Where("user_id = ?", userID)
-		if err := tx.Where("user_group_id = ? AND user_tunnel_id IN (?)", userGroupID, userTunnelIDs).
-			Delete(&model.GroupPermissionGrant{}).Error; err != nil {
-			return revoked, err
-		}
-
-		for userTunnelID := range groupCreatedTunnelIDs {
-			var remaining int64
-			if err := tx.Model(&model.GroupPermissionGrant{}).Where("user_tunnel_id = ?", userTunnelID).Count(&remaining).Error; err != nil {
-				return revoked, err
-			}
-			if remaining == 0 {
-				var ut model.UserTunnel
-				if lookupErr := tx.Select("user_id", "tunnel_id").Where("id = ?", userTunnelID).First(&ut).Error; lookupErr == nil {
-					revoked = append(revoked, RevokedUserTunnelPair{UserID: ut.UserID, TunnelID: ut.TunnelID})
-				}
-				if err := tx.Where("id = ?", userTunnelID).Delete(&model.UserTunnel{}).Error; err != nil {
-					return revoked, err
-				}
-			}
-		}
-	}
-
-	return revoked, nil
-}
-
-func (r *Repository) RevokeGroupPermissionPairTx(tx *gorm.DB, userGroupID, tunnelGroupID int64) ([]RevokedUserTunnelPair, error) {
-	if tx == nil {
-		return nil, errors.New("database unavailable")
-	}
-
-	type grantRow struct {
-		UserTunnelID   int64
-		CreatedByGroup int
-	}
-
-	var rows []grantRow
-	if err := tx.Model(&model.GroupPermissionGrant{}).
-		Select("user_tunnel_id, created_by_group").
-		Where("user_group_id = ? AND tunnel_group_id = ?", userGroupID, tunnelGroupID).
-		Find(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	groupCreatedTunnelIDs := make(map[int64]struct{})
-	for _, row := range rows {
-		if row.CreatedByGroup == 1 && row.UserTunnelID > 0 {
-			groupCreatedTunnelIDs[row.UserTunnelID] = struct{}{}
-		}
-	}
-
-	if err := tx.Where("user_group_id = ? AND tunnel_group_id = ?", userGroupID, tunnelGroupID).
-		Delete(&model.GroupPermissionGrant{}).Error; err != nil {
-		return nil, err
-	}
-
-	var revoked []RevokedUserTunnelPair
-	for userTunnelID := range groupCreatedTunnelIDs {
-		var remaining int64
-		if err := tx.Model(&model.GroupPermissionGrant{}).Where("user_tunnel_id = ?", userTunnelID).Count(&remaining).Error; err != nil {
-			return revoked, err
-		}
-		if remaining == 0 {
-			var ut model.UserTunnel
-			if lookupErr := tx.Select("user_id", "tunnel_id").Where("id = ?", userTunnelID).First(&ut).Error; lookupErr == nil {
-				revoked = append(revoked, RevokedUserTunnelPair{UserID: ut.UserID, TunnelID: ut.TunnelID})
-			}
-			if err := tx.Where("id = ?", userTunnelID).Delete(&model.UserTunnel{}).Error; err != nil {
-				return revoked, err
-			}
-		}
-	}
-
-	return revoked, nil
 }
 
 func (r *Repository) ReplaceFederationTunnelBindingsTx(tx *gorm.DB, tunnelID int64, bindings []FederationTunnelBinding) error {
@@ -1316,28 +734,6 @@ func (r *Repository) ReplaceFederationTunnelBindingsTx(tx *gorm.DB, tunnelID int
 	return tx.Create(&rows).Error
 }
 
-func (r *Repository) InsertGroupPermission(userGroupID, tunnelGroupID int64, now int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	gp := model.GroupPermission{UserGroupID: userGroupID, TunnelGroupID: tunnelGroupID, CreatedTime: now}
-	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&gp).Error
-}
-
-func (r *Repository) InsertGroupPermissionGrant(userGroupID, tunnelGroupID, userTunnelID int64, createdByGroup int, now int64) {
-	if r == nil || r.db == nil {
-		return
-	}
-	g := model.GroupPermissionGrant{
-		UserGroupID:    userGroupID,
-		TunnelGroupID:  tunnelGroupID,
-		UserTunnelID:   userTunnelID,
-		CreatedByGroup: createdByGroup,
-		CreatedTime:    now,
-	}
-	_ = r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&g).Error
-}
-
 func (r *Repository) EnsureUserTunnelGrant(userID, tunnelID int64) (int64, bool, error) {
 	if r == nil || r.db == nil {
 		return 0, false, errors.New("repository not initialized")
@@ -1377,7 +773,7 @@ func (r *Repository) EnsureUserTunnelGrant(userID, tunnelID int64) (int64, bool,
 	return ut.ID, true, nil
 }
 
-func (r *Repository) CreateForwardTx(userID int64, userName, name string, tunnelID int64, remoteAddr, strategy string, now int64, inx int, entryNodeIDs []int64, port int, inIp string, speedID interface{}, maxConn int, ipMaxConn int, ipSpeedID interface{}, proxyProtocol int, proxyProtocolReceive int, proxyProtocolSend int) (int64, error) {
+func (r *Repository) CreateForwardTx(userID int64, userName, name string, tunnelID int64, remoteAddr, strategy string, now int64, inx int, entryNodeIDs []int64, port int, inIp string, proxyProtocol int, proxyProtocolReceive int, proxyProtocolSend int) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, errors.New("repository not initialized")
 	}
@@ -1397,10 +793,6 @@ func (r *Repository) CreateForwardTx(userID int64, userName, name string, tunnel
 			UpdatedTime:          now,
 			Status:               1,
 			Inx:                  inx,
-			MaxConn:              maxConn,
-			SpeedID:              nullInt64FromInterface(speedID),
-			IPMaxConn:            ipMaxConn,
-			IPSpeedID:            nullInt64FromInterface(ipSpeedID),
 			ProxyProtocol:        proxyProtocol,
 			ProxyProtocolReceive: proxyProtocolReceive,
 			ProxyProtocolSend:    proxyProtocolSend,
@@ -1608,73 +1000,6 @@ func parsePortRangeSpec(input string) []int {
 	return out
 }
 
-func (r *Repository) AddUserToGroups(userID int64, groupIDs []int64, now int64) error {
-	if r == nil || r.db == nil {
-		return errors.New("repository not initialized")
-	}
-	if len(groupIDs) == 0 {
-		return nil
-	}
-	rows := make([]model.UserGroupUser, 0, len(groupIDs))
-	for _, gid := range groupIDs {
-		if gid <= 0 {
-			continue
-		}
-		rows = append(rows, model.UserGroupUser{UserGroupID: gid, UserID: userID, CreatedTime: now})
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
-}
-
-func (r *Repository) ReplaceUserGroupsByUserID(userID int64, newGroupIDs []int64, now int64) (affectedGroupIDs []int64, err error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-
-	var oldGroupIDs []int64
-	if err = r.db.Model(&model.UserGroupUser{}).
-		Where("user_id = ?", userID).
-		Pluck("user_group_id", &oldGroupIDs).Error; err != nil {
-		return nil, err
-	}
-
-	seen := make(map[int64]struct{})
-	for _, id := range oldGroupIDs {
-		seen[id] = struct{}{}
-	}
-	for _, id := range newGroupIDs {
-		if id > 0 {
-			seen[id] = struct{}{}
-		}
-	}
-	for id := range seen {
-		affectedGroupIDs = append(affectedGroupIDs, id)
-	}
-
-	if err = r.db.Where("user_id = ?", userID).Delete(&model.UserGroupUser{}).Error; err != nil {
-		return nil, err
-	}
-
-	if len(newGroupIDs) == 0 {
-		return affectedGroupIDs, nil
-	}
-	rows := make([]model.UserGroupUser, 0, len(newGroupIDs))
-	for _, gid := range newGroupIDs {
-		if gid <= 0 {
-			continue
-		}
-		rows = append(rows, model.UserGroupUser{UserGroupID: gid, UserID: userID, CreatedTime: now})
-	}
-	if len(rows) > 0 {
-		if err = r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
-			return nil, err
-		}
-	}
-	return affectedGroupIDs, nil
-}
-
 func (r *Repository) AdvanceNodeRenewalCycles(now int64) (int, error) {
 	if r == nil || r.db == nil {
 		return 0, nil
@@ -1691,15 +1016,8 @@ func (r *Repository) AdvanceNodeRenewalCycles(now int64) (int, error) {
 			continue
 		}
 
-		cycleMonths := 0
-		switch node.RenewalCycle.String {
-		case "month":
-			cycleMonths = 1
-		case "quarter":
-			cycleMonths = 3
-		case "year":
-			cycleMonths = 12
-		default:
+		cycleMonths := model.RenewalCycleMonths(node.RenewalCycle.String)
+		if cycleMonths == 0 {
 			continue
 		}
 
@@ -1729,4 +1047,39 @@ func advanceByMonths(timestamp int64, months int) int64 {
 	t := time.Unix(timestamp/1000, 0)
 	next := t.AddDate(0, months, 0)
 	return next.UnixMilli()
+}
+
+// nodeProfileColumns are the node columns UpdateNodeColumns may set.
+var nodeProfileColumns = map[string]bool{
+	"group_name": true, "public_note": true, "price": true, "currency": true,
+	"renewal_cycle": true, "expiry_time": true, "expiry_reminder_dismissed": true,
+	"traffic_quota_gb": true, "traffic_calc": true, "traffic_reset_day": true,
+	"traffic_adjust_up": true, "traffic_adjust_down": true, "traffic_adjust_period": true,
+	"updated_time": true,
+}
+
+// UpdateNodeColumns sets profile columns of a node (group, price, traffic
+// plan ...); other columns are refused.
+func (r *Repository) UpdateNodeColumns(id int64, updates map[string]interface{}) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository not initialized")
+	}
+	for k := range updates {
+		if !nodeProfileColumns[k] {
+			return fmt.Errorf("node column %q cannot be updated here", k)
+		}
+	}
+	return r.db.Model(&model.Node{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// ListNodeTrafficPlans returns every node with the columns its traffic
+// period needs.
+func (r *Repository) ListNodeTrafficPlans() ([]model.Node, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+	var nodes []model.Node
+	err := r.db.Select("id", "traffic_quota_gb", "traffic_calc", "traffic_reset_day",
+		"traffic_adjust_up", "traffic_adjust_down", "traffic_adjust_period").Find(&nodes).Error
+	return nodes, err
 }

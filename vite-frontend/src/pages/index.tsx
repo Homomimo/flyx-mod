@@ -18,6 +18,7 @@ import {
   beginPasskeyLogin,
   finishPasskeyLogin,
   getGithubStatus,
+  getLoginMethods,
   beginGithubLogin,
 } from "@/api";
 import { writeLoginSession } from "@/utils/session";
@@ -43,6 +44,9 @@ export default function IndexPage() {
   const [siteKey, setSiteKey] = useState("");
   const [passkeyEnabled, setPasskeyEnabled] = useState(false);
   const [githubEnabled, setGithubEnabled] = useState(false);
+  const [statusPageEnabled, setStatusPageEnabled] = useState(false);
+  // null until known, so the password form does not flash in and out.
+  const [passwordAllowed, setPasswordAllowed] = useState<boolean | null>(null);
   const navigate = useNavigate();
   const isWebView = useWebViewMode();
 
@@ -53,6 +57,20 @@ export default function IndexPage() {
       .then((res) => setGithubEnabled(res.code === 0 && res.data.enabled))
       .catch(() => setGithubEnabled(false));
   }, [isWebView]);
+
+  useEffect(() => {
+    getLoginMethods()
+      .then((res) => setPasswordAllowed(res.code !== 0 || res.data.password))
+      .catch(() => setPasswordAllowed(true));
+  }, []);
+
+  useEffect(() => {
+    getPublicConfigByName("status_page_enabled")
+      .then((res) =>
+        setStatusPageEnabled(res.code === 0 && res.data?.value === "true"),
+      )
+      .catch(() => setStatusPageEnabled(false));
+  }, []);
 
   const handleGithubLogin = async () => {
     setLoading(true);
@@ -246,56 +264,60 @@ export default function IndexPage() {
             </CardHeader>
             <CardBody className="px-6 py-6 mt-2">
               <div className="flex flex-col gap-5">
-                <Input
-                  classNames={{
-                    inputWrapper:
-                      "bg-background border border-input h-10 rounded-md",
-                    input: "text-base font-medium",
-                  }}
-                  errorMessage={errors.username}
-                  isDisabled={loading}
-                  isInvalid={!!errors.username}
-                  label="Username"
-                  placeholder="admin"
-                  value={form.username}
-                  variant="bordered"
-                  onChange={(e) =>
-                    handleInputChange("username", e.target.value)
-                  }
-                  onKeyDown={handleKeyPress}
-                />
+                {passwordAllowed && (
+                  <>
+                    <Input
+                      classNames={{
+                        inputWrapper:
+                          "bg-background border border-input h-10 rounded-md",
+                        input: "text-base font-medium",
+                      }}
+                      errorMessage={errors.username}
+                      isDisabled={loading}
+                      isInvalid={!!errors.username}
+                      label="Username"
+                      placeholder="admin"
+                      value={form.username}
+                      variant="bordered"
+                      onChange={(e) =>
+                        handleInputChange("username", e.target.value)
+                      }
+                      onKeyDown={handleKeyPress}
+                    />
 
-                <Input
-                  classNames={{
-                    inputWrapper:
-                      "bg-background border border-input h-10 rounded-md",
-                    input: "text-base font-medium tracking-wider",
-                  }}
-                  isDisabled={loading}
-                  isInvalid={!!errors.password}
-                  label="Password"
-                  placeholder="••••••••"
-                  type="password"
-                  value={form.password}
-                  variant="bordered"
-                  onChange={(e) =>
-                    handleInputChange("password", e.target.value)
-                  }
-                  onKeyDown={handleKeyPress}
-                />
+                    <Input
+                      classNames={{
+                        inputWrapper:
+                          "bg-background border border-input h-10 rounded-md",
+                        input: "text-base font-medium tracking-wider",
+                      }}
+                      isDisabled={loading}
+                      isInvalid={!!errors.password}
+                      label="Password"
+                      placeholder="••••••••"
+                      type="password"
+                      value={form.password}
+                      variant="bordered"
+                      onChange={(e) =>
+                        handleInputChange("password", e.target.value)
+                      }
+                      onKeyDown={handleKeyPress}
+                    />
 
-                <Button
-                  className="mt-2 h-10 rounded-md bg-primary text-primary-foreground font-medium"
-                  disabled={loading}
-                  isLoading={loading}
-                  onPress={handleLogin}
-                >
-                  {loading
-                    ? showCaptcha
-                      ? "Verifying..."
-                      : "Signing in..."
-                    : "Sign In"}
-                </Button>
+                    <Button
+                      className="mt-2 h-10 rounded-md bg-primary text-primary-foreground font-medium"
+                      disabled={loading}
+                      isLoading={loading}
+                      onPress={handleLogin}
+                    >
+                      {loading
+                        ? showCaptcha
+                          ? "Verifying..."
+                          : "Signing in..."
+                        : "Sign In"}
+                    </Button>
+                  </>
+                )}
                 {passkeyEnabled && (
                   <Button
                     className="h-10 rounded-md"
@@ -308,13 +330,27 @@ export default function IndexPage() {
                 )}
                 {githubEnabled && (
                   <Button
-                    className="h-10 rounded-md"
+                    className={`h-10 rounded-md ${
+                      passwordAllowed === false
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : ""
+                    }`}
                     disabled={loading}
-                    variant="bordered"
+                    variant={passwordAllowed === false ? "solid" : "bordered"}
                     onPress={() => void handleGithubLogin()}
                   >
                     使用 GitHub 登录
                   </Button>
+                )}
+                {statusPageEnabled && (
+                  // The status page is a separate app (a theme) the panel
+                  // serves at /status/, not a route of this one.
+                  <a
+                    className="text-center text-sm text-default-500 transition-colors hover:text-foreground"
+                    href="/status/"
+                  >
+                    查看服务器状态 →
+                  </a>
                 )}
               </div>
             </CardBody>

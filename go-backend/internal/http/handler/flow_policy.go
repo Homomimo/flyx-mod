@@ -2,42 +2,11 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
-	"math"
 	"strconv"
 	"strings"
 	"time"
 )
-
-const bytesPerGB int64 = 1024 * 1024 * 1024
-const bytesPerMiB int64 = 1024 * 1024
-
-func flowLimitBytes(flowGB, flowMiB int64) int64 {
-	if flowMiB > 0 {
-		if flowMiB > math.MaxInt64/bytesPerMiB {
-			return math.MaxInt64
-		}
-		return flowMiB * bytesPerMiB
-	}
-	if flowGB > math.MaxInt64/bytesPerGB {
-		return math.MaxInt64
-	}
-	return flowGB * bytesPerGB
-}
-
-type userTunnelPolicy struct {
-	ID       int64
-	UserID   int64
-	TunnelID int64
-	Flow     int64
-	FlowMiB  int64
-	InFlow   int64
-	OutFlow  int64
-	ExpTime  int64
-	Status   int
-	Num      int
-}
 
 type gostConfigSnapshot struct {
 	Services []namedConfigItem `json:"services"`
@@ -62,15 +31,7 @@ func (h *Handler) processFlowItem(nodeID int64, item flowItem) {
 		log.Printf("flow metadata read failed node_id=%d err=%v", nodeID, err)
 		return
 	}
-	if err := validateFlowUploadItems([]flowItem{item}, metas); err != nil {
-		log.Printf("flow upload rejected node_id=%d err=%v", nodeID, err)
-		return
-	}
-	if err := validateFlowUploadItems([]flowItem{item}, metas); err != nil {
-		log.Printf("flow upload rejected node_id=%d err=%v", nodeID, err)
-		return
-	}
-	if err := validateFlowUploadItems([]flowItem{item}, metas); err != nil {
+	if err := validateFlowUploadItems([]flowItem{item}); err != nil {
 		log.Printf("flow upload rejected node_id=%d err=%v", nodeID, err)
 		return
 	}
@@ -236,193 +197,6 @@ func (h *Handler) enforcePeerShareFlowLimit(shareID int64) {
 	if err := h.cleanupPeerShareRuntimes(shareID); err != nil {
 		log.Printf("peer share quota cleanup pending share_id=%d err=%v", shareID, err)
 	}
-}
-
-func (h *Handler) enforceFlowPolicies(userID int64, userTunnelID int64) {
-	now := time.Now().UnixMilli()
-
-	if h.shouldPauseUser(userID, now) {
-		h.pauseUserForwards(userID, now)
-	}
-
-	policy, err := h.getUserTunnelPolicy(userTunnelID)
-	if err != nil || policy == nil {
-		return
-	}
-
-	if shouldPauseUserTunnel(policy, now) {
-		h.pauseUserTunnelForwards(policy.UserID, policy.TunnelID, now)
-	}
-}
-
-func (h *Handler) ensureUserTunnelForwardAllowed(userID int64, tunnelID int64, now int64) error {
-	if h == nil || h.repo == nil {
-		return errors.New("invalid flow policy context")
-	}
-	if userID <= 0 || tunnelID <= 0 {
-		return nil
-	}
-
-	user, err := h.repo.GetUserByID(userID)
-	if err != nil {
-		return err
-	}
-	if user == nil {
-		return errors.New("用户不存在")
-	}
-
-	if user.Status != 1 {
-		return errors.New("账号已禁用")
-	}
-	if user.ExpTime > 0 && user.ExpTime <= now {
-		return errors.New("账号已过期")
-	}
-
-	flowLimit := flowLimitBytes(user.Flow, user.FlowMiB)
-	current := user.InFlow + user.OutFlow
-	if flowLimit < current {
-		return errors.New("流量已超额，禁止开启转发")
-	}
-	if err := h.ensureUserForwardAllowedByQuota(userID, now); err != nil {
-		return err
-	}
-
-	if user.Num > 0 {
-		currentForwardCount, err := h.repo.CountActiveForwardsByUser(userID)
-		if err != nil {
-			return err
-		}
-		if currentForwardCount >= int64(user.Num) {
-			return errors.New("转发数量已达上限")
-		}
-	}
-
-	userTunnelID, _, _, err := h.resolveUserTunnelAndLimiter(userID, tunnelID)
-	if err != nil {
-		return err
-	}
-	if userTunnelID <= 0 {
-		return nil
-	}
-
-	policy, err := h.getUserTunnelPolicy(userTunnelID)
-	if err != nil {
-		return err
-	}
-	if policy == nil {
-		return nil
-	}
-
-	if policy.Status != 1 {
-		return errors.New("该隧道已禁用")
-	}
-	if policy.ExpTime > 0 && policy.ExpTime <= now {
-		return errors.New("该隧道已过期")
-	}
-
-	utFlowLimit := flowLimitBytes(policy.Flow, policy.FlowMiB)
-	utCurrent := policy.InFlow + policy.OutFlow
-	if utCurrent >= utFlowLimit {
-		return errors.New("该隧道流量已超额，禁止开启转发")
-	}
-
-	if policy.Num > 0 {
-		currentTunnelForwardCount, err := h.repo.CountActiveForwardsByUserTunnel(userID, tunnelID)
-		if err != nil {
-			return err
-		}
-		if currentTunnelForwardCount >= int64(policy.Num) {
-			return errors.New("该隧道转发数量已达上限")
-		}
-	}
-
-	return nil
-}
-
-func (h *Handler) shouldPauseUser(userID int64, now int64) bool {
-	user, err := h.repo.GetUserByID(userID)
-	if err != nil || user == nil {
-		return false
-	}
-
-	flowLimit := flowLimitBytes(user.Flow, user.FlowMiB)
-	current := user.InFlow + user.OutFlow
-	if flowLimit < current {
-		return true
-	}
-	if user.ExpTime > 0 && user.ExpTime <= now {
-		return true
-	}
-	return user.Status != 1
-}
-
-func shouldPauseUserTunnel(policy *userTunnelPolicy, now int64) bool {
-	if policy == nil {
-		return false
-	}
-
-	flowLimit := flowLimitBytes(policy.Flow, policy.FlowMiB)
-	current := policy.InFlow + policy.OutFlow
-	if current >= flowLimit {
-		return true
-	}
-	if policy.ExpTime > 0 && policy.ExpTime <= now {
-		return true
-	}
-	return policy.Status != 1
-}
-
-func (h *Handler) getUserTunnelPolicy(userTunnelID int64) (*userTunnelPolicy, error) {
-	if userTunnelID <= 0 {
-		return nil, nil
-	}
-	ut, err := h.repo.GetUserTunnelByID(userTunnelID)
-	if err != nil {
-		return nil, err
-	}
-	if ut == nil {
-		return nil, nil
-	}
-	return &userTunnelPolicy{
-		ID: ut.ID, UserID: ut.UserID, TunnelID: ut.TunnelID,
-		Flow: ut.Flow, FlowMiB: ut.FlowMiB, InFlow: ut.InFlow, OutFlow: ut.OutFlow,
-		ExpTime: ut.ExpTime, Status: ut.Status, Num: ut.Num,
-	}, nil
-}
-
-func (h *Handler) pauseUserForwards(userID int64, now int64) {
-	forwards, err := h.listActiveForwardsByUser(userID)
-	if err != nil {
-		return
-	}
-	h.pauseForwardRecords(forwards, now)
-}
-
-func (h *Handler) pauseUserTunnelForwards(userID int64, tunnelID int64, now int64) {
-	forwards, err := h.listActiveForwardsByUserTunnel(userID, tunnelID)
-	if err != nil {
-		return
-	}
-	h.pauseForwardRecords(forwards, now)
-}
-
-func (h *Handler) pauseForwardRecords(forwards []forwardRecord, now int64) {
-	for i := range forwards {
-		forward := forwards[i]
-		if err := h.controlForwardServices(&forward, "PauseService", false); err != nil {
-			log.Printf("flow policy pause failed forward=%d: %v", forward.ID, err)
-			continue
-		}
-		_ = h.repo.UpdateForwardStatus(forward.ID, 0, now)
-	}
-}
-
-func (h *Handler) listActiveForwardsByUser(userID int64) ([]forwardRecord, error) {
-	return h.repo.ListActiveForwardsByUser(userID)
-}
-
-func (h *Handler) listActiveForwardsByUserTunnel(userID int64, tunnelID int64) ([]forwardRecord, error) {
-	return h.repo.ListActiveForwardsByUserTunnel(userID, tunnelID)
 }
 
 func (h *Handler) cleanNodeConfigs(nodeID int64, rawConfig string) {
@@ -603,11 +377,9 @@ func (h *Handler) cleanOrphanedLimiters(nodeID int64, limiters []namedConfigItem
 		if name == "" || strings.HasPrefix(name, "peer-share-") {
 			continue
 		}
+		// The panel no longer sets speed limits of its own: whatever limiter
+		// no service uses is left over from before and goes.
 		if _, ok := inUse[name]; ok {
-			continue
-		}
-		exists, err := h.lookupSpeedLimiter(name)
-		if err != nil || exists {
 			continue
 		}
 		_, _ = h.sendNodeCommand(nodeID, "DeleteLimiters", map[string]interface{}{"limiter": name}, false, true)
@@ -668,35 +440,4 @@ func (h *Handler) deleteOrphanedForwardService(nodeID int64, serviceName string,
 	_, _ = h.sendNodeCommand(nodeID, "DeleteService", map[string]interface{}{
 		"services": buildForwardServiceDeleteNames([]string{base}),
 	}, false, true)
-}
-
-func (h *Handler) speedLimiterExists(name string) bool {
-	exists, _ := h.lookupSpeedLimiter(name)
-	return exists
-}
-
-func (h *Handler) lookupSpeedLimiter(name string) (bool, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false, nil
-	}
-
-	const forwardRulePrefix = "rule_traffic_limit_"
-	if strings.HasPrefix(name, forwardRulePrefix) {
-		forwardID, err := strconv.ParseInt(strings.TrimPrefix(name, forwardRulePrefix), 10, 64)
-		if err != nil || forwardID <= 0 {
-			return false, nil
-		}
-		forward, err := h.getForwardRecord(forwardID)
-		if errors.Is(err, errForwardNotFound) {
-			return false, nil
-		}
-		return forward != nil && forward.IPSpeedID.Valid && forward.IPSpeedID.Int64 > 0, err
-	}
-
-	id, err := strconv.ParseInt(name, 10, 64)
-	if err != nil || id <= 0 {
-		return false, nil
-	}
-	return h.repo.SpeedLimitExists(id)
 }

@@ -29,6 +29,10 @@ func (h *Handler) nodeCreate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault(err.Error()))
 		return
 	}
+	if _, err := nodeProfileUpdates(req); err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
 	name := asString(req["name"])
 	serverIP := asString(req["serverIp"])
 	if name == "" || serverIP == "" {
@@ -87,7 +91,26 @@ func (h *Handler) nodeCreate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+	if err := h.applyNodeRegionRequest(nodeID, req); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	if err := h.applyNodeProfileRequest(nodeID, req); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	h.nudgeNodeRegions()
 	response.WriteJSON(w, response.OKEmpty())
+}
+
+// applyNodeRegionRequest stores the "region" the admin chose ("" = detect).
+// Requests without the field (older clients) leave it as it is.
+func (h *Handler) applyNodeRegionRequest(nodeID int64, req map[string]interface{}) error {
+	raw, ok := req["region"]
+	if !ok {
+		return nil
+	}
+	return h.repo.SetNodeRegion(nodeID, normalizeNodeRegion(asString(raw)))
 }
 
 func (h *Handler) nodeUpdate(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +125,10 @@ func (h *Handler) nodeUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	notifyEvents, err := nodeNotifyEventsFromRequest(req)
 	if err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
+	if _, err := nodeProfileUpdates(req); err != nil {
 		response.WriteJSON(w, response.ErrDefault(err.Error()))
 		return
 	}
@@ -173,6 +200,15 @@ func (h *Handler) nodeUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+	if err := h.applyNodeRegionRequest(id, req); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	if err := h.applyNodeProfileRequest(id, req); err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
+	h.nudgeNodeRegions()
 	if forwardMode == "nftables" && currentStatus != 1 {
 		if err := h.repo.UpdateNodeStatus(id, 1); err != nil {
 			response.WriteJSON(w, response.Err(-2, err.Error()))
@@ -350,13 +386,6 @@ func (h *Handler) nodeInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channel := normalizeReleaseChannel(req.Channel)
-	version, err := resolveLatestReleaseByChannel(channel)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, fmt.Sprintf("获取最新%s失败: %v", releaseChannelLabel(channel), err)))
-		return
-	}
-
 	secret, err := h.repo.GetNodeSecret(req.ID)
 	if err != nil {
 		response.WriteJSON(w, response.ErrDefault("服务器不存在"))
@@ -365,16 +394,27 @@ func (h *Handler) nodeInstall(w http.ResponseWriter, r *http.Request) {
 	panelAddr, err := h.repo.GetViteConfigValue("ip")
 	if err != nil {
 		if err == sql.ErrNoRows {
-			response.WriteJSON(w, response.ErrDefault("请先前往网站配置中设置ip"))
+			response.WriteJSON(w, response.ErrDefault("请先在设置 → 基本中填写并保存面板后端地址（IP:端口或域名:端口），再生成安装命令"))
 			return
 		}
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+	address := processServerAddress(panelAddr)
+	if address == "" {
+		response.WriteJSON(w, response.ErrDefault("请先在设置 → 基本中填写并保存面板后端地址（IP:端口或域名:端口），再生成安装命令"))
+		return
+	}
+
+	channel := normalizeReleaseChannel(req.Channel)
+	version, err := resolveLatestReleaseByChannel(channel)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, fmt.Sprintf("获取最新%s失败: %v", releaseChannelLabel(channel), err)))
+		return
+	}
 	enabled, proxyURL := h.getGithubProxyConfig()
 
 	var cmd string
-	address := processServerAddress(panelAddr)
 	if enabled {
 		cmd = fmt.Sprintf("curl -L %s/https://github.com/%s/releases/download/%s/install.sh -o ./install.sh && chmod +x ./install.sh && PROXY_ENABLED=true PROXY_URL=%s VERSION=%s ./install.sh -a %s -s %s",
 			proxyURL, githubRepo, version, proxyURL, version, address, secret)
@@ -408,6 +448,22 @@ type nodeInstallCommands struct {
 	DockerComposePrivileged string `json:"dockerComposePrivileged"`
 }
 
+// legacyImageOwners are other owners FLYX images were published under (the
+// repository was briefly under seren233 for 3.9.0): agents running one are ours.
+var legacyImageOwners = []string{"kure29", "seren233"}
+
+// flyxImagePattern is a shell case pattern matching this project's images:
+// "ghcr.io/<owner>/*|ghcr.io/seren233/*".
+func flyxImagePattern(owner string) string {
+	patterns := []string{"ghcr.io/" + owner + "/*"}
+	for _, legacy := range legacyImageOwners {
+		if legacy != owner {
+			patterns = append(patterns, "ghcr.io/"+legacy+"/*")
+		}
+	}
+	return strings.Join(patterns, "|")
+}
+
 // dockerInstallCommand runs the agent image published with the release.
 // Host networking lets forwards listen on any port, NET_ADMIN is for the
 // nftables counters and whitelists, and the restart policy brings the
@@ -427,7 +483,7 @@ data=/etc/flyx-agent
 destination=/etc/flyx-agent
 current=$(docker inspect -f '{{.Name}}' flyx-agent 2>/dev/null || true)
 legacy=$(docker inspect -f '{{.Config.Image}}' flux_agent 2>/dev/null || true)
-case "$legacy" in ghcr.io/%s/*) ;; *) legacy= ;; esac
+case "$legacy" in %s) ;; *) legacy= ;; esac
 if [ -n "$current" ] && [ -n "$legacy" ]; then
   echo '同时发现新旧节点容器，请先确认要重装的实例' >&2
   exit 1
@@ -449,7 +505,7 @@ docker run -d --name "$name" --restart unless-stopped --network host --cap-add N
   -v "$data:$destination" -e FLYX_AGENT_DATA_DIR="$destination" \
   -e FLYX_AGENT_ADDR=%s -e FLUX_AGENT_ADDR=%s \
   -e FLYX_AGENT_SECRET=%s -e FLUX_AGENT_SECRET=%s "$image"`,
-		owner, quote("ghcr.io/"+owner+"/flyx-agent:"+version), quote("ghcr.io/"+owner+"/flux-agent:"+version), privilegedFlag, quote(panelAddr), quote(panelAddr), quote(secret), quote(secret))
+		flyxImagePattern(owner), quote("ghcr.io/"+owner+"/flyx-agent:"+version), quote("ghcr.io/"+owner+"/flux-agent:"+version), privilegedFlag, quote(panelAddr), quote(panelAddr), quote(secret), quote(secret))
 	return "sh -c " + quote(script)
 }
 
@@ -463,7 +519,7 @@ func dockerComposeInstallCommand(version, panelAddr, secret string, privileged b
 	}
 	// Compose interpolates "$" in values; doubling it keeps the secret intact.
 	value := func(v string) string { return strconv.Quote(strings.ReplaceAll(v, "$", "$$")) }
-	return fmt.Sprintf(`case "$(docker inspect -f '{{.Config.Image}}' flux_agent 2>/dev/null || true)" in ghcr.io/%s/*)
+	return fmt.Sprintf(`case "$(docker inspect -f '{{.Config.Image}}' flux_agent 2>/dev/null || true)" in %s)
   echo '检测到旧版 flux_agent 容器；请先使用 Docker 安装命令升级，或停止并移除旧容器后再执行。' >&2
   exit 1;;
 esac
@@ -492,7 +548,7 @@ if docker container inspect flyx-agent >/dev/null 2>&1; then
   docker rm -f flyx-agent >/dev/null
 fi
 docker compose -f /opt/docker/flyx-agent/docker-compose.yaml up -d`,
-		owner, owner, version, privilegedLine, value(panelAddr), value(panelAddr), value(secret), value(secret))
+		flyxImagePattern(owner), owner, version, privilegedLine, value(panelAddr), value(panelAddr), value(secret), value(secret))
 }
 
 func (h *Handler) nodeUpdateOrder(w http.ResponseWriter, r *http.Request) {
@@ -674,13 +730,10 @@ func (h *Handler) uninstallNodeAgent(node *model.Node) nodeDeleteResult {
 	return result
 }
 
+// normalizeNodeRenewalCycle accepts "month", "quarter", "year" and "<n>m" /
+// "<n>y"; "" for anything else (no cycle).
 func normalizeNodeRenewalCycle(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "month", "quarter", "year":
-		return strings.ToLower(strings.TrimSpace(v))
-	default:
-		return ""
-	}
+	return model.CanonicalRenewalCycle(model.RenewalCycleMonths(strings.ToLower(strings.TrimSpace(v))))
 }
 
 func defaultNodeForwardMode(mode string) string {

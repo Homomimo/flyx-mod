@@ -23,7 +23,7 @@ func TestDiagnosisChainCoverageContracts(t *testing.T) {
 
 	if err := r.DB().Exec(`
 		INSERT INTO user(id, user, pwd, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status)
-		VALUES(2, 'normal_user', '3c85cdebade1c51cf64ca9f3c09d182d', 1, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)
+		VALUES(2, 'normal_user', '3c85cdebade1c51cf64ca9f3c09d182d', 0, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)
 	`, now, now).Error; err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestDiagnosisChainCoverageContracts(t *testing.T) {
 	}
 	forwardID := mustLastInsertID(t, r, "chain-forward")
 
-	userToken, err := auth.GenerateToken(2, "normal_user", 1, secret)
+	userToken, err := auth.GenerateToken(2, "normal_user", 0, secret)
 	if err != nil {
 		t.Fatalf("generate user token: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestForwardDiagnosisRespectsTunnelIPPreferenceContract(t *testing.T) {
 
 	if err := r.DB().Exec(`
 		INSERT INTO user(id, user, pwd, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status)
-		VALUES(2, 'normal_user', '3c85cdebade1c51cf64ca9f3c09d182d', 1, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)
+		VALUES(2, 'normal_user', '3c85cdebade1c51cf64ca9f3c09d182d', 0, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)
 	`, now, now).Error; err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestForwardDiagnosisRespectsTunnelIPPreferenceContract(t *testing.T) {
 	}
 	forwardID := mustLastInsertID(t, r, "ip-pref-forward")
 
-	userToken, err := auth.GenerateToken(2, "normal_user", 1, secret)
+	userToken, err := auth.GenerateToken(2, "normal_user", 0, secret)
 	if err != nil {
 		t.Fatalf("generate user token: %v", err)
 	}

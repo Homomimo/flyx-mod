@@ -3,7 +3,10 @@
 // transparently with both SQLite and PostgreSQL.
 package model
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // ─── Core Business Tables ────────────────────────────────────────────
 
@@ -104,6 +107,124 @@ type Node struct {
 	// NftError is why the agent cannot use nftables (not installed, no
 	// permission in a container), as last reported; empty when it can.
 	NftError string `gorm:"column:nft_error;type:text;not null;default:''"`
+	// The machine as its agent last described it (3.9.0 on); empty before.
+	HostOS             string `gorm:"column:host_os;type:varchar(200);not null;default:''"`
+	HostKernel         string `gorm:"column:host_kernel;type:varchar(200);not null;default:''"`
+	HostArch           string `gorm:"column:host_arch;type:varchar(50);not null;default:''"`
+	HostCPUName        string `gorm:"column:host_cpu_name;type:varchar(200);not null;default:''"`
+	HostVirtualization string `gorm:"column:host_virtualization;type:varchar(50);not null;default:''"`
+	// Region is the country (ISO 3166-1 alpha-2, upper case) the admin set;
+	// empty lets the panel detect it. RegionDetected is what the panel found
+	// for the address in RegionDetectedFrom (empty when it found nothing).
+	Region             string `gorm:"column:region;type:varchar(8);not null;default:''"`
+	RegionDetected     string `gorm:"column:region_detected;type:varchar(8);not null;default:''"`
+	RegionDetectedFrom string `gorm:"column:region_detected_from;type:varchar(100);not null;default:''"`
+	// GroupName is the admin's own grouping (香港, 家宽, ...), shown on the
+	// status page instead of regions when set; "" is no group.
+	GroupName string `gorm:"column:group_name;type:varchar(50);not null;default:''"`
+	// PublicNote is shown on the status page (Remark stays private).
+	PublicNote string `gorm:"column:public_note;type:varchar(200);not null;default:''"`
+	// Price per renewal period (RenewalCycle) in Currency (ISO 4217, CNY by
+	// default); 0 is free / not set.
+	Price    float64 `gorm:"column:price;not null;default:0"`
+	Currency string  `gorm:"column:currency;type:varchar(10);not null;default:''"`
+	// The node's traffic plan: TrafficQuotaGB a month (0 = no quota),
+	// counted per TrafficCalc (TrafficCalc* constants), the period starting
+	// on TrafficResetDay (1-31; a short month resets on its last day).
+	TrafficQuotaGB  int64  `gorm:"column:traffic_quota_gb;not null;default:0"`
+	TrafficCalc     string `gorm:"column:traffic_calc;type:varchar(10);not null;default:''"`
+	TrafficResetDay int    `gorm:"column:traffic_reset_day;not null;default:0"`
+	// Traffic correction: bytes added to the period starting at
+	// TrafficAdjustPeriod (ms), so the admin can set what was really used;
+	// it lapses when the next period starts.
+	TrafficAdjustUp     int64 `gorm:"column:traffic_adjust_up;not null;default:0"`
+	TrafficAdjustDown   int64 `gorm:"column:traffic_adjust_down;not null;default:0"`
+	TrafficAdjustPeriod int64 `gorm:"column:traffic_adjust_period;not null;default:0"`
+}
+
+// How a node's traffic counts against its quota.
+const (
+	TrafficCalcSum  = ""     // upload + download
+	TrafficCalcMax  = "max"  // the larger of the two
+	TrafficCalcUp   = "up"   // upload (sent) only
+	TrafficCalcDown = "down" // download (received) only
+)
+
+// TrafficUsed is the traffic that counts against the quota.
+func TrafficUsed(calc string, up, down int64) int64 {
+	switch calc {
+	case TrafficCalcMax:
+		return max(up, down)
+	case TrafficCalcUp:
+		return up
+	case TrafficCalcDown:
+		return down
+	}
+	return up + down
+}
+
+// RenewalCycleMonths is the length of a renewal cycle in months: "month",
+// "quarter", "year", or "<n>m" / "<n>y" (1-120 months); 0 for none.
+func RenewalCycleMonths(cycle string) int {
+	switch cycle {
+	case "month":
+		return 1
+	case "quarter":
+		return 3
+	case "year":
+		return 12
+	}
+	if len(cycle) < 2 {
+		return 0
+	}
+	n := 0
+	for _, c := range cycle[:len(cycle)-1] {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+		if n > 120 {
+			return 0
+		}
+	}
+	months := 0
+	switch cycle[len(cycle)-1] {
+	case 'm':
+		months = n
+	case 'y':
+		months = n * 12
+	}
+	if months < 1 || months > 120 {
+		return 0
+	}
+	return months
+}
+
+// CanonicalRenewalCycle stores a cycle of months the way older panels read
+// it where possible ("month", "quarter", "year"), else "<n>m" or "<n>y".
+func CanonicalRenewalCycle(months int) string {
+	switch {
+	case months <= 0 || months > 120:
+		return ""
+	case months == 1:
+		return "month"
+	case months == 3:
+		return "quarter"
+	case months == 12:
+		return "year"
+	case months%12 == 0:
+		return fmt.Sprintf("%dy", months/12)
+	}
+	return fmt.Sprintf("%dm", months)
+}
+
+// EffectiveRegion is the country shown for the node: the admin's choice,
+// else the detected one.
+func (n Node) EffectiveRegion() string {
+	if n.Region != "" {
+		return n.Region
+	}
+	return n.RegionDetected
 }
 
 func (Node) TableName() string { return "node" }
@@ -541,6 +662,9 @@ type InboundBackup struct {
 	ImportedName        string `json:"importedName,omitempty"`
 	OutboundID          int64  `json:"outboundId,omitempty"`
 	SplitRules          string `json:"splitRules,omitempty"`
+	DefaultBlock        int    `json:"defaultBlock,omitempty"`
+	RateUpMbps          int    `json:"rateUpMbps,omitempty"`
+	RateDownMbps        int    `json:"rateDownMbps,omitempty"`
 	Tags                string `json:"tags,omitempty"`
 }
 
@@ -639,6 +763,22 @@ type NodeBackup struct {
 	// NotifyEvents is nil in backups made before per-server notifications;
 	// restoring such a backup keeps the saved overrides.
 	NotifyEvents *string `json:"notifyEvents,omitempty"`
+	// Region is the country the admin chose; older backups have none.
+	Region *string `json:"region,omitempty"`
+	// Profile: group, notes, price and traffic plan (3.9.4 on).
+	Profile *NodeProfileBackup `json:"profile,omitempty"`
+}
+
+// NodeProfileBackup is a server's profile in a backup. The traffic
+// correction is left out: it only applies to the period it was made in.
+type NodeProfileBackup struct {
+	Group           string  `json:"group,omitempty"`
+	PublicNote      string  `json:"publicNote,omitempty"`
+	Price           float64 `json:"price,omitempty"`
+	Currency        string  `json:"currency,omitempty"`
+	TrafficQuotaGB  int64   `json:"trafficQuotaGb,omitempty"`
+	TrafficCalc     string  `json:"trafficCalc,omitempty"`
+	TrafficResetDay int     `json:"trafficResetDay,omitempty"`
 }
 
 type TunnelBackup struct {
@@ -936,6 +1076,9 @@ type NodeMetric struct {
 	TCPConns    int64   `gorm:"column:tcp_conns" json:"tcpConns"`
 	UDPConns    int64   `gorm:"column:udp_conns" json:"udpConns"`
 	Uptime      int64   `gorm:"column:uptime" json:"uptime"`
+	// Zero from agents before 3.9.0.
+	SwapUsage float64 `gorm:"column:swap_usage;not null;default:0" json:"swapUsage"`
+	Procs     int64   `gorm:"column:process_count;not null;default:0" json:"processCount"`
 }
 
 func (NodeMetric) TableName() string { return "node_metric" }

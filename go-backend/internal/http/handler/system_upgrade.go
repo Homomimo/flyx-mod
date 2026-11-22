@@ -50,6 +50,9 @@ type systemUpgradeExecutor struct {
 	// as a host path, so the helper must run in the host path itself;
 	// running in deployDir would remount an empty /opt/flvx-panel.
 	hostDeployDir string
+	// registryToken, when set, logs the helper in to ghcr.io before it
+	// pulls: the images of a private repository are private too.
+	registryUser, registryToken string
 }
 
 var hostPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._/@+-]*$`)
@@ -259,6 +262,13 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+if [ -n "${FLYX_REGISTRY_TOKEN:-}" ]; then
+  log "登录 ghcr.io..."
+  if ! printf '%s' "$FLYX_REGISTRY_TOKEN" | docker login ghcr.io -u "$FLYX_REGISTRY_USER" --password-stdin >> "$LOGFILE" 2>&1; then
+    log "警告: 登录 ghcr.io 失败，继续尝试拉取（令牌需要 read:packages 权限）"
+  fi
+fi
+
 log "拉取新镜像..."
 if ! docker compose pull backend frontend >> "$LOGFILE" 2>&1; then
   log "错误: 拉取镜像失败"
@@ -314,6 +324,9 @@ func (e *systemUpgradeExecutor) buildHelperRunArgs(imageID, helperName string) (
 	}
 	if composeProjectPattern.MatchString(e.composeProject) {
 		args = append(args, "-e", "COMPOSE_PROJECT_NAME="+e.composeProject)
+	}
+	if e.registryToken != "" && e.registryUser != "" {
+		args = append(args, "-e", "FLYX_REGISTRY_USER="+e.registryUser, "-e", "FLYX_REGISTRY_TOKEN="+e.registryToken)
 	}
 	return append(args,
 		"--entrypoint", "/bin/sh", imageID,
@@ -417,7 +430,7 @@ func (h *Handler) buildSystemUpgradeDownloadURL(version, filename string) string
 // panel's own quota (and GITHUB_TOKEN).
 func (h *Handler) fetchSystemUpgradeReleases() ([]githubRelease, error) {
 	enabled, proxyURL := h.getGithubProxyConfig()
-	if !enabled || isPanelGithubMirror(proxyURL) {
+	if !enabled || isPanelGithubMirror(proxyURL) || githubToken() != "" {
 		return fetchGitHubReleases()
 	}
 	return cachedGitHubReleases(func() ([]githubRelease, error) {
@@ -510,6 +523,21 @@ func (e *systemUpgradeExecutor) startHelper(ctx context.Context, imageID, helper
 }
 
 func (h *Handler) downloadReleaseAsset(version, filename string) ([]byte, error) {
+	if githubToken() != "" {
+		// Private repository: fetch with the token, as the mirror does.
+		path, err := ghMirrorFetch(&ghMirrorUpstream{url: fmt.Sprintf("%s/%s/releases/download/%s/%s", ghMirrorBases.github, githubRepo, version, filename)})
+		if err != nil {
+			return nil, fmt.Errorf("下载%s失败: %v", filename, err)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("读取%s失败: %v", filename, err)
+		}
+		if len(body) > maxSystemUpgradeComposeAssetBytes || len(bytes.TrimSpace(body)) == 0 {
+			return nil, fmt.Errorf("下载%s内容无效", filename)
+		}
+		return body, nil
+	}
 	url := h.buildSystemUpgradeDownloadURL(version, filename)
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := systemUpgradeHTTPGet(client, url)
@@ -716,6 +744,10 @@ func (h *Handler) systemUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exec.composeProject = exec.detectComposeProject(r.Context())
+	if token := githubToken(); token != "" {
+		owner, _, _ := strings.Cut(githubRepo, "/")
+		exec.registryUser, exec.registryToken = owner, token
+	}
 	exec.hostDeployDir = exec.detectHostDeployDir(r.Context())
 	helperName := fmt.Sprintf("flyx-upgrade-helper-%d", time.Now().Unix())
 	helperContainer, err := exec.startHelper(r.Context(), imageID, helperName)

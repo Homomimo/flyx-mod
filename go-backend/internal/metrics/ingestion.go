@@ -27,6 +27,8 @@ type SystemInfo struct {
 	UDPConns         int64   `json:"udp_conns"`
 	NetInSpeed       int64   `json:"net_in_speed"`
 	NetOutSpeed      int64   `json:"net_out_speed"`
+	SwapUsage        float64 `json:"swap_usage"`
+	ProcessCount     int64   `json:"process_count"`
 }
 
 // NodeTrafficRetention keeps a little over a year of node traffic.
@@ -91,6 +93,8 @@ func (s *IngestionService) RecordNodeMetric(nodeID int64, info SystemInfo) {
 		TCPConns:    info.TCPConns,
 		UDPConns:    info.UDPConns,
 		Uptime:      int64(info.Uptime),
+		SwapUsage:   info.SwapUsage,
+		Procs:       info.ProcessCount,
 	}
 
 	s.nodeBufferMu.Lock()

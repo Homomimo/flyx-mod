@@ -42,10 +42,7 @@ api_call() {
 }
 
 # Examples
-echo "=== My Package Info ==="
-api_call "/api/v1/user/package" | jq '.'
-
-echo -e "\n=== Node List ==="
+echo "=== Node List ==="
 api_call "/api/v1/node/list" '{}' | jq '.data.list[] | {name, status: (.status == 1)}'
 
 echo -e "\n=== Forward List ==="
@@ -163,10 +160,6 @@ class FlvxClient:
     
     # Convenience methods
     
-    def get_package(self) -> Dict:
-        """Get current user's package info"""
-        return self.request("/api/v1/user/package", {})
-    
     def list_nodes(self) -> List[Dict]:
         """List all nodes"""
         data = self.request("/api/v1/node/list", {})
@@ -183,7 +176,6 @@ class FlvxClient:
         tunnel_id: int, 
         remote_addr: str,
         strategy: str = "fifo",
-        speed_id: int = 0
     ) -> Dict:
         """Create a forward"""
         return self.request("/api/v1/forward/create", {
@@ -191,7 +183,6 @@ class FlvxClient:
             "tunnelId": tunnel_id,
             "remoteAddr": remote_addr,
             "strategy": strategy,
-            "speedId": speed_id
         })
     
     def pause_forward(self, forward_id: int) -> None:
@@ -211,13 +202,8 @@ class FlvxClient:
 if __name__ == "__main__":
     client = FlvxClient()
     
-    # Get package info
-    pkg = client.get_package()
-    print(f"Traffic: {pkg['inFlow'] / 1e9:.2f}GB ↑ / {pkg['outFlow'] / 1e9:.2f}GB ↓")
-    print(f"Quota: {pkg['flow']}GB")
-    
     # List forwards with traffic
-    print("\nForwards:")
+    print("Forwards:")
     for fwd in client.list_forwards():
         print(f"  {fwd['name']}: {fwd['in_port']} → {fwd['remote_addr']}")
         print(f"    Traffic: {fwd['in_flow'] / 1e9:.2f}GB ↑ / {fwd['out_flow'] / 1e9:.2f}GB ↓")
@@ -243,15 +229,6 @@ class FlvxError extends Error {
     super(message);
     this.name = "FlvxError";
   }
-}
-
-interface UserPackage {
-  flow: number;
-  inFlow: number;
-  outFlow: number;
-  tunnels: number;
-  forwards: number;
-  expTime: number;
 }
 
 interface Node {
@@ -342,10 +319,6 @@ class FlvxClient {
 
   // Convenience methods
 
-  async getPackage(): Promise<UserPackage> {
-    return this.request("/api/v1/user/package", {});
-  }
-
   async listNodes(): Promise<Node[]> {
     const data = await this.request<{ list: Node[] }>("/api/v1/node/list", {});
     return data.list ?? [];
@@ -363,14 +336,12 @@ class FlvxClient {
     tunnelId: number;
     remoteAddr: string;
     strategy?: "fifo" | "round";
-    speedId?: number;
   }): Promise<Forward> {
     return this.request("/api/v1/forward/create", {
       name: options.name,
       tunnelId: options.tunnelId,
       remoteAddr: options.remoteAddr,
       strategy: options.strategy ?? "fifo",
-      speedId: options.speedId ?? 0,
     });
   }
 
@@ -393,13 +364,8 @@ export { FlvxClient, FlvxError };
 async function main() {
   const client = new FlvxClient();
 
-  // Get package info
-  const pkg = await client.getPackage();
-  console.log(`Traffic: ${(pkg.inFlow / 1e9).toFixed(2)}GB ↑ / ${(pkg.outFlow / 1e9).toFixed(2)}GB ↓`);
-  console.log(`Quota: ${pkg.flow}GB`);
-
   // List nodes
-  console.log("\nNodes:");
+  console.log("Nodes:");
   const nodes = await client.listNodes();
   for (const node of nodes) {
     console.log(`  ${node.name}: ${node.status ? "Online" : "Offline"}`);

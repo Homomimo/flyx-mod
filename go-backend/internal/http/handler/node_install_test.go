@@ -2,26 +2,94 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"go-backend/internal/http/response"
+	"go-backend/internal/store/repo"
 )
+
+func TestNodeInstallPanelAddress(t *testing.T) {
+	var limited atomic.Bool
+	var calls atomic.Int32
+	fakeGitHub(t, &limited, &calls)
+	r, err := repo.Open(filepath.Join(t.TempDir(), "node-install.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	h := New(r, "unit-test-secret")
+	nodeID := mustCreateLatencyNode(t, r, "install-node", 0, 0)
+
+	for _, tc := range []struct {
+		name    string
+		address string
+		missing bool
+		valid   bool
+	}{
+		{name: "missing", missing: true},
+		{name: "empty"},
+		{name: "whitespace", address: " \t\n "},
+		{name: "path-only", address: "/api/v1"},
+		{name: "backend-url", address: " https://panel.example.com:6365/api/v1/ ", valid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.missing {
+				if err := r.UpsertConfig("ip", tc.address, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, mode := range []string{"script", "docker", "docker-compose", "all"} {
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/node/install",
+					strings.NewReader(fmt.Sprintf(`{"id":%d,"mode":%q}`, nodeID, mode)))
+				rec := httptest.NewRecorder()
+				h.nodeInstall(rec, req)
+				var out response.R
+				if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+					t.Fatal(err)
+				}
+				if !tc.valid {
+					if out.Code != -1 || !strings.Contains(out.Msg, "面板后端地址") || out.Data != nil {
+						t.Fatalf("%s generated command with no address: %+v", mode, out)
+					}
+					if calls.Load() != 0 {
+						t.Fatal("looked up releases before validating the panel address")
+					}
+					continue
+				}
+				if out.Code != 0 || !strings.Contains(rec.Body.String(), "panel.example.com:6365") {
+					t.Fatalf("%s: %s", mode, rec.Body.String())
+				}
+				if strings.Contains(rec.Body.String(), "https://panel.example.com:6365/api/v1/") {
+					t.Fatalf("%s did not normalize backend URL: %s", mode, rec.Body.String())
+				}
+			}
+		})
+	}
+}
 
 // Execute the generated command with an isolated Docker stub: exercise shell
 // quoting, old mounts, image fallback and the order of destructive operations.
 func TestDockerInstallCommand(t *testing.T) {
 	old := githubRepo
-	githubRepo = "Kure29/flyx"
+	githubRepo = "Homomimo/flyx-mod"
 	defer func() { githubRepo = old }()
 	for _, tc := range []struct {
 		name, existing, mount, pullFailure, wantName, wantMount, wantImage string
 		fail                                                               bool
 	}{
 		{name: "fresh", wantName: "flyx-agent", wantMount: "/etc/flyx-agent:/etc/flyx-agent", wantImage: "flyx-agent"},
+		// Images from while the repository was under seren233 are ours too.
 		{name: "legacy", existing: "flux_agent", mount: "/srv/old agent", wantName: "flux_agent", wantMount: "/srv/old agent:/etc/flux_agent", wantImage: "flyx-agent"},
+		{name: "legacy-current-owner", existing: "flux_agent=ghcr.io/kure29/flux-agent:3.9.0", mount: "/srv/old agent", wantName: "flux_agent", wantMount: "/srv/old agent:/etc/flux_agent", wantImage: "flyx-agent"},
 		// flux-panel / FLVX agents share the container name; they are left alone.
 		{name: "foreign-legacy", existing: "flux_agent=ghcr.io/sagit-chu/flux-agent:2.0", mount: "/etc/flux_agent", wantName: "flyx-agent", wantMount: "/etc/flyx-agent:/etc/flyx-agent", wantImage: "flyx-agent"},
 		{name: "foreign-legacy-and-current", existing: "flyx-agent,flux_agent=ghcr.io/sagit-chu/flux-agent:2.0", mount: "agent-volume", wantName: "flyx-agent", wantMount: "agent-volume:/etc/flyx-agent", wantImage: "flyx-agent"},
@@ -39,7 +107,7 @@ func TestDockerInstallCommand(t *testing.T) {
 import json,os,sys
 args=sys.argv[1:]
 with open(os.environ["FLYX_TEST_LOG"],"a") as f:f.write(json.dumps(args)+"\n")
-existing=dict((x.split("=")+["ghcr.io/kure29/flux-agent:3.3.0"])[:2] for x in os.environ["FLYX_TEST_EXISTING"].split(",") if x)
+existing=dict((x.split("=")+["ghcr.io/seren233/flux-agent:3.3.0"])[:2] for x in os.environ["FLYX_TEST_EXISTING"].split(",") if x)
 if args[0]=="inspect":
  if args[2]=="{{.Name}}" or args[2]=="{{.Config.Image}}":
   if args[-1] not in existing:sys.exit(1)
@@ -94,7 +162,7 @@ elif args[0]=="pull":
 			if tc.fail {
 				return
 			}
-			for _, want := range []string{tc.wantName, tc.wantMount, "FLYX_AGENT_SECRET=" + secret, "FLUX_AGENT_SECRET=" + secret, "ghcr.io/kure29/" + tc.wantImage + ":3.4.0"} {
+			for _, want := range []string{tc.wantName, tc.wantMount, "FLYX_AGENT_SECRET=" + secret, "FLUX_AGENT_SECRET=" + secret, "ghcr.io/homomimo/" + tc.wantImage + ":3.4.0"} {
 				if !slices.Contains(run, want) {
 					t.Fatalf("missing argument %q in %q", want, run)
 				}
@@ -118,7 +186,7 @@ func TestDockerInstallCommandPrivileged(t *testing.T) {
 
 func TestDockerComposeInstallCommand(t *testing.T) {
 	old := githubRepo
-	githubRepo = "Kure29/flyx"
+	githubRepo = "Homomimo/flyx-mod"
 	defer func() { githubRepo = old }()
 
 	cmd := dockerComposeInstallCommand("3.4.0", "panel.example.com:6365", "s3cret", false)
@@ -126,7 +194,7 @@ func TestDockerComposeInstallCommand(t *testing.T) {
 		"mkdir -p /opt/docker/flyx-agent",
 		"(umask 077 && cat > /opt/docker/flyx-agent/docker-compose.yaml) <<'EOF'",
 		"/opt/docker/flyx-agent/docker-compose.yaml",
-		"image: ghcr.io/kure29/flyx-agent:3.4.0",
+		"image: ghcr.io/homomimo/flyx-agent:3.4.0",
 		"container_name: flyx-agent",
 		"restart: unless-stopped",
 		"network_mode: host",
@@ -138,7 +206,7 @@ func TestDockerComposeInstallCommand(t *testing.T) {
 		`FLYX_AGENT_SECRET: "s3cret"`,
 		`FLUX_AGENT_SECRET: "s3cret"`,
 		"chmod 600 /opt/docker/flyx-agent/docker-compose.yaml",
-		`case "$(docker inspect -f '{{.Config.Image}}' flux_agent 2>/dev/null || true)" in ghcr.io/kure29/*)`,
+		`case "$(docker inspect -f '{{.Config.Image}}' flux_agent 2>/dev/null || true)" in ghcr.io/homomimo/*|ghcr.io/kure29/*|ghcr.io/seren233/*)`,
 		"检测到旧版 flux_agent 容器",
 		"if docker container inspect flyx-agent >/dev/null 2>&1; then",
 		"docker rm -f flyx-agent >/dev/null",
@@ -155,7 +223,7 @@ func TestDockerComposeInstallCommand(t *testing.T) {
 		"/opt/docker/docker-compose.yaml",
 		"container_name: flux_agent",
 		"/etc/flux_agent:/etc/flux_agent",
-		"image: ghcr.io/kure29/flux-agent:3.4.0",
+		"image: ghcr.io/homomimo/flux-agent:3.4.0",
 	} {
 		if strings.Contains(cmd, unwanted) {
 			t.Errorf("unexpected %q in %s", unwanted, cmd)

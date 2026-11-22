@@ -347,7 +347,7 @@ func (h *Handler) createRelayForward(userID int64, name string, tunnel *tunnelRe
 		userName = "admin"
 	}
 	forwardID, err := h.repo.CreateForwardTx(userID, userName, name, tunnel.ID, remoteAddr, "fifo", now,
-		h.repo.NextIndex("forward"), entryNodes, port, "", nil, 0, 0, nil, 0, 0, proxyProtocolSend)
+		h.repo.NextIndex("forward"), entryNodes, port, "", 0, 0, proxyProtocolSend)
 	if err != nil {
 		return 0, err
 	}
@@ -505,6 +505,10 @@ func (h *Handler) removeInboundRelays(inboundID int64) {
 // the landing node directly (unless relay-only or local-only) and each
 // relay entry.
 func (h *Handler) inboundEndpoints(rows []model.NodeInbound) ([]kernel.Endpoint, []string) {
+	return h.inboundEndpointsForUser(rows, nil, false)
+}
+
+func (h *Handler) inboundEndpointsForUser(rows []model.NodeInbound, user *kernel.User, preview bool) ([]kernel.Endpoint, []string) {
 	relays, err := h.relayViews(0)
 	if err != nil {
 		log.Printf("relay lookup failed: %v", err)
@@ -526,6 +530,13 @@ func (h *Handler) inboundEndpoints(rows []model.NodeInbound) ([]kernel.Endpoint,
 		if err != nil {
 			continue
 		}
+		proxy := importedProxy(&row)
+		if proxy == nil && user != nil {
+			in = in.ForUser(*user)
+		}
+		if !preview && in.Settings.SSSubscriptionUsers && (user == nil || in.Settings.Password == "") {
+			continue
+		}
 		node, ok := nodes[row.NodeID]
 		if !ok {
 			node, _ = h.repo.GetNodeByID(row.NodeID)
@@ -537,11 +548,10 @@ func (h *Handler) inboundEndpoints(rows []model.NodeInbound) ([]kernel.Endpoint,
 			pq = kernelSupportsPostQuantumReality(k)
 			postQuantum[row.KernelID] = pq
 		}
-		proxy := importedProxy(&row)
 		if row.RelayOnly != 1 && !isLoopbackListen(row.Listen) {
 			host := inboundShareAddress(&row, node)
 			if host != "" {
-				endpoints = append(endpoints, kernel.Endpoint{Name: row.Name, Host: host, Port: row.Port, Inbound: in, Direct: true, Proxy: proxy, SourceID: row.SourceID, PostQuantumReality: pq})
+				endpoints = append(endpoints, kernel.Endpoint{Name: row.Name, Host: host, Port: row.Port, Inbound: in, Direct: true, Proxy: proxy, SourceID: row.SourceID, PostQuantumReality: pq, OrderKey: fmt.Sprintf("direct:%d", row.ID)})
 				kinds = append(kinds, "direct")
 			}
 		}
@@ -559,7 +569,7 @@ func (h *Handler) inboundEndpoints(rows []model.NodeInbound) ([]kernel.Endpoint,
 					host = rel.ShareHost
 				}
 				// A relay forwards TCP; REALITY still ends at the landing kernel.
-				endpoints = append(endpoints, kernel.Endpoint{Name: name, Host: host, Port: entry.Port, Inbound: in, Proxy: proxy, SourceID: row.SourceID, PostQuantumReality: pq})
+				endpoints = append(endpoints, kernel.Endpoint{Name: name, Host: host, Port: entry.Port, Inbound: in, Proxy: proxy, SourceID: row.SourceID, PostQuantumReality: pq, OrderKey: fmt.Sprintf("relay:%d:%s:%d", rel.ID, entry.Host, entry.Port)})
 				kinds = append(kinds, "relay")
 			}
 		}
@@ -575,6 +585,10 @@ func (h *Handler) inboundShare(w http.ResponseWriter, r *http.Request) {
 	row, err := h.repo.GetNodeInbound(id)
 	if err != nil || row == nil {
 		response.WriteJSON(w, response.ErrDefault("入站不存在"))
+		return
+	}
+	if in, err := inboundFromModel(*row); err == nil && in.Settings.SSSubscriptionUsers {
+		response.WriteJSON(w, response.ErrDefault("该入站只接受订阅独立密码，请通过分发订阅使用"))
 		return
 	}
 	enabled := *row
@@ -700,18 +714,13 @@ func constantTimeEqual(a, b string) bool {
 // installedKernelVersion is a concrete release such as "25.10.15".
 var installedKernelVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+(\.[0-9]+)?$`)
 
-// kernelSupportsPostQuantumReality enables Mihomo's X25519MLKEM768 option
-// only for Xray 26.7.11 or later. Unknown installed versions do not count.
+// kernelSupportsPostQuantumReality: Xray negotiates X25519MLKEM768 in REALITY
+// from 25.5.16 on. Mihomo needs server support for it, so an unknown installed
+// version does not count.
 func kernelSupportsPostQuantumReality(k *model.NodeKernel) bool {
 	if k == nil || k.KernelType != kernel.TypeXray {
 		return false
 	}
 	version := strings.TrimSpace(k.InstalledVersion)
-	if fields := strings.Fields(version); len(fields) > 0 && strings.EqualFold(fields[0], "xray") {
-		if len(fields) < 2 {
-			return false
-		}
-		version = fields[1]
-	}
-	return installedKernelVersion.MatchString(version) && !versionBelow(version, 26, 7, 11)
+	return installedKernelVersion.MatchString(version) && !versionBelow(version, 25, 5, 16)
 }

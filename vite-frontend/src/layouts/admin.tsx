@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { toast } from "react-hot-toast";
 import {
-  ArrowDownToLine,
   ChevronsLeft,
   ChevronsRight,
   Globe,
   LayoutGrid,
-  LineChart,
   Link2,
   LogOut,
   Menu,
@@ -16,27 +13,19 @@ import {
   Settings,
   Share2,
   UserRound,
-  Users,
 } from "lucide-react";
 
 import { BrandLogo } from "@/components/brand-logo";
 import { VersionFooter } from "@/components/version-footer";
-import { getMonitorAccess } from "@/api";
 import { safeLogout } from "@/utils/logout";
 import { siteConfig } from "@/config/site";
 import { useMobileBreakpoint } from "@/hooks/useMobileBreakpoint";
-import { getAdminFlag } from "@/utils/session";
-import { useHasMySubscriptions } from "@/hooks/use-has-my-subscriptions";
 
 interface MenuItem {
   path: string;
   label: string;
   icon: React.ReactNode;
-  adminOnly?: boolean;
-  // Hidden for admins: the page lives under 中转 for them.
-  userOnly?: boolean;
-  adminLabel?: string;
-  // Admin menu heading shown above this item.
+  // Menu heading shown above this item.
   section?: string;
 }
 
@@ -51,15 +40,9 @@ export default function AdminLayout({
   const [isCollapsed, setIsCollapsed] = useState(
     () => localStorage.getItem("sidebar_collapsed") === "true",
   );
-  const [isAdmin, setIsAdmin] = useState(() => getAdminFlag());
-  const hasMySubs = useHasMySubscriptions(isAdmin);
-  const [monitorAllowed, setMonitorAllowed] = useState<boolean | null>(null);
-  const [monitorAccessReason, setMonitorAccessReason] = useState<string | null>(
-    null,
-  );
   const isMobile = useMobileBreakpoint();
 
-  // 菜单项配置：管理员按 线路 / 分发 / 系统 分组（用户页含分组和限速），普通用户保持原样
+  // 菜单项按 线路 / 分发 / 系统 分组；规则和隧道在 中转 里，监控在 节点 和 中转 里
   const menuItems: MenuItem[] = [
     {
       path: "/dashboard",
@@ -67,117 +50,39 @@ export default function AdminLayout({
       icon: <LayoutGrid className="h-4 w-4" strokeWidth={1.75} />,
     },
     {
-      path: "/forward",
-      label: "规则",
-      icon: <ArrowDownToLine className="h-4 w-4" strokeWidth={1.75} />,
-      userOnly: true,
-    },
-    {
-      path: "/my-subscriptions",
-      label: "订阅",
-      icon: <Rss className="h-4 w-4" strokeWidth={1.75} />,
-      // Shown once the user has subscriptions assigned.
-      userOnly: true,
-    },
-    {
       path: "/node",
       section: "线路",
       label: "服务器",
       icon: <Server className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
     },
     {
       path: "/inbound",
       label: "节点",
       icon: <Globe className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
     },
     {
       path: "/relay",
       label: "中转",
       icon: <Link2 className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
     },
     {
       path: "/subscription",
       section: "分发",
       label: "订阅",
       icon: <Rss className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
-    },
-    {
-      path: "/user",
-      label: "用户",
-      icon: <Users className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
-    },
-    {
-      path: "/monitor",
-      // Admins find monitoring under 节点 and 中转.
-      userOnly: true,
-      section: "系统",
-      label: "监控",
-      icon: <LineChart className="h-4 w-4" strokeWidth={1.75} />,
     },
     {
       path: "/panel-sharing",
+      section: "系统",
       label: "共享",
       icon: <Share2 className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
     },
     {
       path: "/config",
       label: "设置",
       icon: <Settings className="h-4 w-4" strokeWidth={1.75} />,
-      adminOnly: true,
     },
   ];
-
-  useEffect(() => {
-    // 获取用户信息
-    const adminFlag = getAdminFlag();
-
-    setIsAdmin(adminFlag);
-
-    // Monitor permission is not strictly role-based; non-admin users may be
-    // granted access explicitly. Fetch a lightweight capability flag so we can
-    // avoid a confusing 403 navigation.
-    if (adminFlag) {
-      setMonitorAllowed(true);
-      setMonitorAccessReason(null);
-
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const res = await getMonitorAccess();
-
-        if (cancelled) return;
-        if (res.code === 0 && res.data) {
-          setMonitorAllowed(Boolean(res.data.allowed));
-          setMonitorAccessReason(
-            res.data.allowed ? null : res.data.reason || null,
-          );
-
-          return;
-        }
-        // Fail open to preserve legacy navigation behavior.
-        setMonitorAllowed(true);
-        setMonitorAccessReason(null);
-      } catch {
-        if (cancelled) return;
-        setMonitorAllowed(true);
-        setMonitorAccessReason(null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!isMobile) {
@@ -219,36 +124,11 @@ export default function AdminLayout({
 
   // 菜单点击处理
   const handleMenuClick = (path: string) => {
-    if (path === "/monitor" && monitorAllowed !== true) {
-      if (monitorAllowed == null) {
-        toast("正在检查监控权限，请稍后重试");
-
-        return;
-      }
-
-      const hint =
-        monitorAccessReason === "need_admin_grant"
-          ? "暂无监控权限，请联系管理员在用户页面授予监控权限"
-          : "暂无监控权限，请联系管理员授权";
-
-      toast.error(hint);
-
-      return;
-    }
-
     navigate(path);
     if (isMobile) {
       hideMobileMenu();
     }
   };
-
-  // 过滤菜单项（根据权限）
-  const filteredMenuItems = menuItems
-    .filter((item) => (isAdmin ? !item.userOnly : !item.adminOnly))
-    .filter((item) => item.path !== "/my-subscriptions" || hasMySubs)
-    .map((item) =>
-      isAdmin && item.adminLabel ? { ...item, label: item.adminLabel } : item,
-    );
 
   return (
     <div
@@ -288,21 +168,15 @@ export default function AdminLayout({
         {/* 菜单导航 */}
         <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3 scrollbar-hide">
           <ul className="space-y-0.5">
-            {filteredMenuItems.map((item) => {
+            {menuItems.map((item) => {
               const isActive =
                 location.pathname === item.path ||
                 (item.path === "/relay" &&
-                  isAdmin &&
-                  ["/tunnel", "/forward"].includes(location.pathname)) ||
-                (item.path === "/user" &&
-                  ["/group", "/limit"].includes(location.pathname));
-              const isMonitor = item.path === "/monitor";
-              const isMonitorBlocked = isMonitor && monitorAllowed !== true;
+                  ["/tunnel", "/forward"].includes(location.pathname));
 
               return (
                 <li key={item.path}>
-                  {isAdmin &&
-                    item.section &&
+                  {item.section &&
                     (isCollapsed ? (
                       <div className="mx-2 my-2 border-t border-divider" />
                     ) : (
@@ -312,19 +186,12 @@ export default function AdminLayout({
                     ))}
                   <button
                     aria-current={isActive ? "page" : undefined}
-                    aria-disabled={isMonitorBlocked}
                     className={`flex h-9 w-full items-center rounded-md text-left text-sm transition-colors ${isCollapsed ? "justify-center" : "gap-2.5 px-2"} ${
                       isActive
                         ? "bg-default-100 font-medium text-foreground"
                         : "text-default-500 hover:bg-default-50 hover:text-foreground"
-                    } ${isMonitorBlocked ? "opacity-50" : ""}`}
-                    title={
-                      isCollapsed
-                        ? isMonitorBlocked
-                          ? `${item.label} (无权限)`
-                          : item.label
-                        : undefined
-                    }
+                    }`}
+                    title={isCollapsed ? item.label : undefined}
                     type="button"
                     onClick={() => handleMenuClick(item.path)}
                   >

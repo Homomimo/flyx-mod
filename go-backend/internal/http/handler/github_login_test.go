@@ -185,14 +185,27 @@ func TestAdminPasswordLoginCanBeDisabledOnlyWithGithub(t *testing.T) {
 		t.Fatalf("disable: %+v", out)
 	}
 
-	if out := adminLogin(); out.Code == 0 || !strings.Contains(out.Msg, "禁止使用密码登录") {
+	if out := adminLogin(); out.Code == 0 || !strings.Contains(out.Msg, "禁止密码登录") {
 		t.Fatalf("admin password login must be refused: %+v", out)
 	}
 	if out := githubPost(t, router, "", "/api/v1/user/login", `{"username":"admin_user","password":"wrong"}`); strings.Contains(out.Msg, "禁止") {
 		t.Fatal("a wrong password must not reveal the account is an admin")
 	}
-	if out := userLogin(); out.Code != 0 {
-		t.Fatalf("ordinary users keep password login: %+v", out)
+	if out := userLogin(); out.Code == 0 || !strings.Contains(out.Msg, "只有管理员") {
+		t.Fatalf("only the admin may log in: %+v", out)
+	}
+	methods := func() map[string]bool {
+		t.Helper()
+		out := githubPost(t, router, "", "/api/v1/user/login/methods", `{}`)
+		raw, _ := json.Marshal(out.Data)
+		var m map[string]bool
+		if err := json.Unmarshal(raw, &m); err != nil || out.Code != 0 {
+			t.Fatalf("login methods: %+v (%v)", out, err)
+		}
+		return m
+	}
+	if m := methods(); m["password"] || !m["github"] {
+		t.Fatalf("with password login off the page must offer GitHub only: %v", m)
 	}
 	if out := githubPost(t, router, admin, "/api/v1/user/github/unbind", `{"password":"admin_user"}`); out.Code == 0 {
 		t.Fatal("an admin must not unbind while admin password login is off")
@@ -202,5 +215,8 @@ func TestAdminPasswordLoginCanBeDisabledOnlyWithGithub(t *testing.T) {
 	seedConfigValue(t, r, "github_login_enabled", "false")
 	if out := adminLogin(); out.Code != 0 {
 		t.Fatalf("admin password login must return with GitHub login off: %+v", out)
+	}
+	if m := methods(); !m["password"] || m["github"] {
+		t.Fatalf("with GitHub login off the page must offer the password form: %v", m)
 	}
 }

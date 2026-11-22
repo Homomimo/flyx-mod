@@ -15,11 +15,7 @@ import { ChevronDown, GripVertical } from "lucide-react";
 import { ListGroup, type RowStatus } from "@/components/page-kit";
 import { AnimatedPage } from "@/components/animated-page";
 import { Forward, ForwardTunnelGroup } from "@/pages/forward/types";
-import {
-  normalizeTunnelTrafficRatio,
-  formatTunnelTrafficRatio,
-  buildTunnelGroupSortableId,
-} from "@/pages/forward/grouping";
+import { buildTunnelGroupSortableId } from "@/pages/forward/grouping";
 
 /** Drag-and-drop rows and groups, and the page shell, of the forward page. */
 export const DragHandle = ({
@@ -90,7 +86,6 @@ export const SortableTunnelGroup = ({
     transition,
     isDragging,
   } = useSortable({ id: sortableId });
-  const ratio = normalizeTunnelTrafficRatio(tunnel.tunnelTrafficRatio);
 
   return (
     <div
@@ -124,11 +119,6 @@ export const SortableTunnelGroup = ({
                   />
                   <span className="truncate">{tunnel.tunnelName}</span>
                 </button>
-                {ratio !== 1 && (
-                  <span className="shrink-0 text-xs font-normal text-default-500">
-                    倍率 {formatTunnelTrafficRatio(ratio)}
-                  </span>
-                )}
                 <span className="shrink-0 text-xs font-normal text-default-400">
                   {tunnel.items.length}
                 </span>
@@ -171,6 +161,7 @@ export const SortableForwardRow = ({
   return (
     <div
       ref={setNodeRef}
+      className="list-row-wrap"
       style={buildSortableStyle(transform, transition, isDragging)}
     >
       {children(

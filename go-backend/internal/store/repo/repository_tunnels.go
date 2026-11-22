@@ -9,53 +9,6 @@ import (
 	"go-backend/internal/store/model"
 )
 
-func (r *Repository) ListUserAccessibleTunnels(userID int64) ([]map[string]interface{}, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-
-	type row struct {
-		ID   int64
-		Name string
-	}
-	var rows []row
-	err := r.db.Model(&model.UserTunnel{}).
-		Select("tunnel.id, tunnel.name").
-		Joins("JOIN tunnel ON tunnel.id = user_tunnel.tunnel_id").
-		Where("user_tunnel.user_id = ? AND tunnel.status = 1", userID).
-		Order("tunnel.inx ASC, tunnel.id ASC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-
-	tunnelIDs := make([]int64, 0, len(rows))
-	for _, rw := range rows {
-		tunnelIDs = append(tunnelIDs, rw.ID)
-	}
-	portRangeMap := r.getTunnelEntryPortRanges(tunnelIDs)
-	listen, err := r.TunnelListenOptions(tunnelIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]map[string]interface{}, 0, len(rows))
-	for _, rw := range rows {
-		item := map[string]interface{}{"id": rw.ID, "name": rw.Name}
-		if pr, ok := portRangeMap[rw.ID]; ok {
-			item["portRangeMin"] = pr.min
-			item["portRangeMax"] = pr.max
-		}
-		// Normal users cannot read the tunnel and server lists the admin
-		// form builds the 监听 IP choices from.
-		opt := listen[rw.ID]
-		item["inNodeNum"] = opt.EntryCount
-		item["inIps"] = opt.IPs
-		items = append(items, item)
-	}
-	return items, nil
-}
-
 // TunnelListenOption is what a forward on a tunnel may listen on: the
 // addresses of its entry servers (or the tunnel's own entry address when they
 // have none), as the admin forward form offers them.

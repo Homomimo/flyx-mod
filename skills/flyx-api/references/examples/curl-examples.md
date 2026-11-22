@@ -19,47 +19,6 @@ TOKEN=$(curl -s -X POST "${FLYX_BASE_URL}/api/v1/user/login" \
 echo "Token: ${TOKEN:0:20}..."
 ```
 
-## User Operations
-
-```bash
-# Get my package info
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/user/package" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{}' | jq '.'
-
-# List all users (admin)
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/user/list" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"page":1,"pageSize":20}' | jq '.'
-
-# Create user (admin)
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/user/create" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user": "alice",
-    "pwd": "SecurePass123!",
-    "name": "Alice",
-    "flow": 50,
-    "num": 10,
-    "expTime": 1767225600000
-  }' | jq '.'
-
-# Reset user traffic
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/user/reset" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"id":2,"type":"user"}' | jq '.'
-
-# Delete user
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/user/delete" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"id":2}' | jq '.'
-```
-
 ## Node Operations
 
 ```bash
@@ -120,13 +79,7 @@ curl -s -X POST "${FLYX_BASE_URL}/api/v1/tunnel/create" \
     "outNodeId": [2]
   }' | jq '.'
 
-# Assign tunnel to user
-curl -s -X POST "${FLYX_BASE_URL}/api/v1/tunnel/user/assign" \
-  -H "Authorization: ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"userId":2,"tunnelId":1,"flow":30}' | jq '.'
-
-# Get available tunnels (for current user)
+# List enabled tunnels to pick from
 curl -s -X POST "${FLYX_BASE_URL}/api/v1/tunnel/user/tunnel" \
   -H "Authorization: ${TOKEN}" \
   -H "Content-Type: application/json" \

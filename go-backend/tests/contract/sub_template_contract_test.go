@@ -3,7 +3,6 @@ package contract_test
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,7 +152,7 @@ func TestSubscriptionTemplateContract(t *testing.T) {
 // written out; a Shadowrocket template makes users import a full config.
 func TestSubscriptionTemplateStashShadowrocketContract(t *testing.T) {
 	secret := "contract-jwt-secret"
-	router, r := setupContractRouter(t, secret)
+	router, _ := setupContractRouter(t, secret)
 	admin, _ := auth.GenerateToken(1, "admin_user", 0, secret)
 	post := func(path, body string) response.R { return kernelContractPost(t, router, admin, path, body) }
 	allGroup := jsonInt64(saveNodeGroup(t, router, admin, `{"name":"全部","sourceAll":true}`))
@@ -173,7 +172,6 @@ func TestSubscriptionTemplateStashShadowrocketContract(t *testing.T) {
 		t.Fatalf("save: %+v", sub)
 	}
 	path := sub.Data.(map[string]interface{})["path"].(string)
-	subID := int64(sub.Data.(map[string]interface{})["id"].(float64))
 	for _, format := range []string{"stash", "shadowrocket"} {
 		body := getSub(t, router, path+"?format="+format, "").Body.String()
 		if !strings.Contains(body, "🌍 落地") || strings.Contains(body, "include-all") || !strings.Contains(body, "- \"日本落地\"") {
@@ -182,20 +180,5 @@ func TestSubscriptionTemplateStashShadowrocketContract(t *testing.T) {
 	}
 	if body := getSub(t, router, path+"?format=clash", "").Body.String(); strings.Contains(body, "🌍 落地") {
 		t.Fatalf("mihomo has no template here:\n%s", body)
-	}
-
-	// The assigned user's view tells the Shadowrocket button to import a config.
-	now := time.Now().UnixMilli()
-	if err := r.DB().Exec(`INSERT INTO user(id, user, pwd, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status)
-		VALUES(2, 'xiaoming', 'x', 1, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)`, now, now).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := r.DB().Exec(`UPDATE subscription SET user_id = 2 WHERE id = ?`, subID).Error; err != nil {
-		t.Fatal(err)
-	}
-	user, _ := auth.GenerateToken(2, "xiaoming", 1, secret)
-	mine := kernelContractPost(t, router, user, "/api/v1/user/subscription/list", `{}`).Data.([]interface{})
-	if got := mine[0].(map[string]interface{})["templates"]; fmt.Sprint(got) != "[stash shadowrocket]" {
-		t.Fatalf("user view templates: %v", got)
 	}
 }

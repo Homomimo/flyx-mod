@@ -62,8 +62,8 @@ func main() {
 	}
 }
 
-// enablePasswordLogin lets admins log in with their password again, for an
-// admin locked out after turning it off (e.g. GitHub unreachable):
+// enablePasswordLogin turns password login back on, for an admin locked out
+// after turning it off (e.g. GitHub unreachable):
 // docker compose exec backend /app/paneld enable-password-login
 func enablePasswordLogin(cfg config.Config) {
 	r, err := app.OpenRepository(cfg)
@@ -74,5 +74,5 @@ func enablePasswordLogin(cfg config.Config) {
 	if err := r.UpsertConfig("admin_password_login_disabled", "false", time.Now().UnixMilli()); err != nil {
 		log.Fatalf("enable password login: %v", err)
 	}
-	fmt.Println("已允许管理员使用密码登录")
+	fmt.Println("已重新开启密码登录，现在可以在登录页用账号密码登录")
 }

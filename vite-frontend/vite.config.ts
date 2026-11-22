@@ -43,6 +43,8 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: "/index.html",
+        // The status page is served by the backend (a theme), not this app.
+        navigateFallbackDenylist: [/^\/status(\/|$)/],
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },

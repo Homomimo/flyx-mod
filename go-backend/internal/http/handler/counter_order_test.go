@@ -28,7 +28,7 @@ func TestCounterSnapshotsRejectLateRepliesAndCreditNewEpoch(t *testing.T) {
 	apply(next(), "e1", 900) // A retired epoch cannot return even with a new request ID.
 	apply(next(), "e2", 60)
 	apply(next(), "e2", 90)
-	for _, query := range []string{"SELECT in_flow FROM forward", "SELECT in_flow FROM user WHERE id=1", "SELECT daily_used_bytes FROM user_quota WHERE user_id=1"} {
+	for _, query := range []string{"SELECT in_flow FROM forward", "SELECT in_flow FROM user WHERE id=1"} {
 		if got := mustHandlerCount(t, h, query); got != 190 {
 			t.Fatalf("%s=%d, want 190", query, got)
 		}

@@ -12,7 +12,6 @@ import AdminLayout from "@/layouts/admin";
 import H5Layout from "@/layouts/h5";
 import H5SimpleLayout from "@/layouts/h5-simple";
 import { isLoggedIn } from "@/utils/auth";
-import { getAdminFlag } from "@/utils/session";
 import { siteConfig, updateSiteConfig } from "@/config/site";
 import { useH5Mode } from "@/hooks/useH5Mode";
 import { SESSION_UPDATED_EVENT } from "@/utils/session";
@@ -29,23 +28,18 @@ const loadNodeHub = () => import("@/pages/node-hub");
 const loadInbound = () => import("@/pages/inbound");
 const loadRelay = () => import("@/pages/relay");
 const loadSubscription = () => import("@/pages/subscription");
-const loadUserHub = () => import("@/pages/user-hub");
 const loadConfig = () => import("@/pages/config");
-const loadMySubscriptions = () => import("@/pages/my-subscriptions");
 
 const DashboardPage = lazy(loadDashboard);
 const MonitorPage = lazy(() => import("@/pages/monitor"));
 const ForwardPage = lazy(() => import("@/pages/forward"));
 const TunnelPage = lazy(() => import("@/pages/tunnel"));
-// 用户 hosts the 分组 and 限速 tabs; each tab keeps its address.
-const UserHubPage = lazy(loadUserHub);
 // 节点 hosts the 内核 tab.
 const NodePage = lazy(loadNodeHub);
 const ProfilePage = lazy(() => import("@/pages/profile"));
 const InboundPage = lazy(loadInbound);
 const RelayPage = lazy(loadRelay);
 const SubscriptionPage = lazy(loadSubscription);
-const MySubscriptionsPage = lazy(loadMySubscriptions);
 const ConfigPage = lazy(loadConfig);
 const PanelSharingPage = lazy(() => import("@/pages/panel-sharing"));
 const GithubCallbackPage = lazy(() => import("@/pages/github-callback"));
@@ -64,17 +58,14 @@ function preloadPages() {
   if (pagesPreloaded || connection?.saveData) return;
   pagesPreloaded = true;
   const run = () => {
-    const pages = getAdminFlag()
-      ? [
-          loadDashboard,
-          loadNodeHub,
-          loadInbound,
-          loadRelay,
-          loadSubscription,
-          loadUserHub,
-          loadConfig,
-        ]
-      : [loadDashboard, loadMySubscriptions];
+    const pages = [
+      loadDashboard,
+      loadNodeHub,
+      loadInbound,
+      loadRelay,
+      loadSubscription,
+      loadConfig,
+    ];
 
     for (const load of pages) void load().catch(() => {});
   };
@@ -181,16 +172,14 @@ function App() {
         customBg.startsWith("data:") ||
         customBg.startsWith("/") ||
         customBg.startsWith("blob:");
-      // "" and "theme" are the default plain background; "wallpaper" is
-      // the built-in picture; anything else is an image URL or a colour.
+      // "" and "theme" are the default plain background, as is "wallpaper"
+      // (the built-in picture, since removed) where a panel still has it
+      // saved; anything else is an image URL or a colour.
       const mode =
-        !customBg || customBg === "theme"
+        !customBg || customBg === "theme" || customBg === "wallpaper"
           ? "plain"
-          : customBg === "wallpaper"
-            ? "wallpaper"
-            : "custom";
+          : "custom";
 
-      root.classList.toggle("has-wallpaper-bg", mode === "wallpaper");
       root.classList.toggle("has-custom-bg", mode === "custom");
       root.classList.remove("has-theme-bg");
       if (mode === "custom") {
@@ -282,14 +271,6 @@ function App() {
       <Route
         element={
           <ProtectedRoute>
-            <MySubscriptionsPage />
-          </ProtectedRoute>
-        }
-        path="/my-subscriptions"
-      />
-      <Route
-        element={
-          <ProtectedRoute>
             <TunnelPage />
           </ProtectedRoute>
         }
@@ -305,35 +286,11 @@ function App() {
       />
       <Route
         element={
-          <ProtectedRoute useSimpleLayout={true}>
-            <UserHubPage />
-          </ProtectedRoute>
-        }
-        path="/user"
-      />
-      <Route
-        element={
-          <ProtectedRoute useSimpleLayout={true}>
-            <UserHubPage />
-          </ProtectedRoute>
-        }
-        path="/group"
-      />
-      <Route
-        element={
           <ProtectedRoute>
             <ProfilePage />
           </ProtectedRoute>
         }
         path="/profile"
-      />
-      <Route
-        element={
-          <ProtectedRoute useSimpleLayout={true}>
-            <UserHubPage />
-          </ProtectedRoute>
-        }
-        path="/limit"
       />
       <Route
         element={
@@ -374,6 +331,11 @@ function App() {
           </ProtectedRoute>
         }
         path="/panel-sharing"
+      />
+      {/* Unknown addresses, and pages that are gone (用户, 分组, 限速, 我的订阅). */}
+      <Route
+        element={<Navigate replace to={isLoggedIn() ? "/dashboard" : "/"} />}
+        path="*"
       />
     </Routes>
   );

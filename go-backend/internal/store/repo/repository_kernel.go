@@ -130,7 +130,11 @@ func (r *Repository) ListNodeInbounds() ([]model.NodeInbound, error) {
 		return nil, errors.New("repository not initialized")
 	}
 	var rows []model.NodeInbound
-	return rows, r.db.Order("inx ASC, id ASC").Find(&rows).Error
+	if err := r.db.Order("inx ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	applyRemoteSourceOrder(rows)
+	return rows, nil
 }
 
 func (r *Repository) ListNodeInboundsByKernel(kernelID int64) ([]model.NodeInbound, error) {
@@ -185,6 +189,9 @@ func (r *Repository) SaveNodeInbound(in *model.NodeInbound) error {
 		"enabled":               in.Enabled,
 		"outbound_id":           in.OutboundID,
 		"split_rules":           in.SplitRules,
+		"default_block":         in.DefaultBlock,
+		"rate_up_mbps":          in.RateUpMbps,
+		"rate_down_mbps":        in.RateDownMbps,
 		"outbound_ip_strategy":  in.OutboundIPStrategy,
 		"updated_time":          in.UpdatedTime,
 	}).Error
@@ -513,6 +520,56 @@ func (r *Repository) SetNodeInboundRelayOnly(id int64, relayOnly int) error {
 
 // SetNodeNftError records why a node's agent cannot use nftables ("" when it
 // can); the row is only written when the value changes, which is reported.
+// NodeHostFacts is what an agent reports about its machine.
+type NodeHostFacts struct {
+	OS, Kernel, Arch, CPUName, Virtualization string
+}
+
+// SetNodeHostFacts stores what the node's agent reports about its machine,
+// writing only when something changed.
+func (r *Repository) SetNodeHostFacts(nodeID int64, f NodeHostFacts) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository not initialized")
+	}
+	return r.db.Model(&model.Node{}).
+		Where("id = ? AND (host_os <> ? OR host_kernel <> ? OR host_arch <> ? OR host_cpu_name <> ? OR host_virtualization <> ?)",
+			nodeID, f.OS, f.Kernel, f.Arch, f.CPUName, f.Virtualization).
+		Updates(map[string]interface{}{
+			"host_os": f.OS, "host_kernel": f.Kernel, "host_arch": f.Arch,
+			"host_cpu_name": f.CPUName, "host_virtualization": f.Virtualization,
+		}).Error
+}
+
+// SetNodeRegion stores the country the admin chose for the node ("" = detect).
+func (r *Repository) SetNodeRegion(nodeID int64, region string) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository not initialized")
+	}
+	return r.db.Model(&model.Node{}).Where("id = ? AND region <> ?", nodeID, region).
+		Update("region", region).Error
+}
+
+// SetNodeDetectedRegion stores the country found for the node's address.
+func (r *Repository) SetNodeDetectedRegion(nodeID int64, region, from string) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository not initialized")
+	}
+	return r.db.Model(&model.Node{}).
+		Where("id = ? AND (region_detected <> ? OR region_detected_from <> ?)", nodeID, region, from).
+		Updates(map[string]interface{}{"region_detected": region, "region_detected_from": from}).Error
+}
+
+// ListNodeRegionSources lists what region detection needs for every local node.
+func (r *Repository) ListNodeRegionSources() ([]model.Node, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+	var nodes []model.Node
+	err := r.db.Select("id", "server_ip", "server_ip_v4", "server_ip_v6", "region_detected", "region_detected_from").
+		Where("is_remote = ?", 0).Order("id ASC").Find(&nodes).Error
+	return nodes, err
+}
+
 func (r *Repository) SetNodeNftError(nodeID int64, msg string) (bool, error) {
 	if r == nil || r.db == nil {
 		return false, errors.New("repository not initialized")

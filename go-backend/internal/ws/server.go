@@ -48,12 +48,6 @@ type adminSession struct {
 	conn   *connWrap
 }
 
-type monitorSession struct {
-	userID int64
-	claims auth.Claims
-	conn   *connWrap
-}
-
 type commandResponse struct {
 	Type      string          `json:"type"`
 	Success   bool            `json:"success"`
@@ -89,12 +83,11 @@ type Server struct {
 	onNodeOffline    func(nodeID int64)
 	getUserAuthState func(userID int64) (*auth.UserAuthState, error)
 
-	mu       sync.RWMutex
-	admins   map[*adminSession]struct{}
-	monitors map[*monitorSession]struct{}
-	nodes    map[int64]*nodeSession
-	byConn   map[*websocket.Conn]*nodeSession
-	pending  map[string]pendingRequest
+	mu      sync.RWMutex
+	admins  map[*adminSession]struct{}
+	nodes   map[int64]*nodeSession
+	byConn  map[*websocket.Conn]*nodeSession
+	pending map[string]pendingRequest
 	// lastMetric holds each online node's latest broadcast metric message, so
 	// a page that connects between agent reports shows metrics right away
 	// instead of waiting for the next report.
@@ -115,6 +108,27 @@ type SystemInfo struct {
 	UDPConns         int64   `json:"udp_conns"`
 	NetInSpeed       int64   `json:"net_in_speed"`
 	NetOutSpeed      int64   `json:"net_out_speed"`
+	// Reported by agents from this release on; zero from older ones.
+	CPUCores  int    `json:"cpu_cores,omitempty"`
+	MemUsed   uint64 `json:"mem_used,omitempty"`
+	MemTotal  uint64 `json:"mem_total,omitempty"`
+	DiskUsed  uint64 `json:"disk_used,omitempty"`
+	DiskTotal uint64 `json:"disk_total,omitempty"`
+	// Reported by agents from 3.9.0 on.
+	SwapUsed     uint64 `json:"swap_used,omitempty"`
+	SwapTotal    uint64 `json:"swap_total,omitempty"`
+	ProcessCount int64  `json:"process_count,omitempty"`
+	// Host comes with a connection's first report and when it changes.
+	Host *HostFacts `json:"host,omitempty"`
+}
+
+// HostFacts describes the machine an agent runs on.
+type HostFacts struct {
+	OS             string `json:"os"`
+	Kernel         string `json:"kernel"`
+	Arch           string `json:"arch"`
+	CPUName        string `json:"cpu_name"`
+	Virtualization string `json:"virtualization"`
 }
 
 func (s *Server) SetNodeOnlineHook(fn func(nodeID int64)) {
@@ -163,7 +177,6 @@ func NewServer(repo *repo.Repository, jwtSecret string) *Server {
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 		admins:     make(map[*adminSession]struct{}),
-		monitors:   make(map[*monitorSession]struct{}),
 		nodes:      make(map[int64]*nodeSession),
 		byConn:     make(map[*websocket.Conn]*nodeSession),
 		pending:    make(map[string]pendingRequest),
@@ -209,19 +222,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if claims.RoleID == 0 {
-			if !s.validateAdminSession(userID, claims) {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			s.handleAdmin(w, r, userID, claims)
-			return
-		}
-		if !s.validateMonitorSession(userID, claims) {
+		// Only the admin can log in, so only the admin gets live updates.
+		if claims.RoleID != 0 || !s.validateAdminSession(userID, claims) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		s.handleMonitor(w, r, userID, claims)
+		s.handleAdmin(w, r, userID, claims)
 		return
 	}
 
@@ -250,39 +256,6 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, userID int6
 		close(done)
 		s.mu.Lock()
 		delete(s.admins, session)
-		s.mu.Unlock()
-		_ = conn.Close()
-	}()
-
-	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			return
-		}
-	}
-}
-
-func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request, userID int64, claims auth.Claims) {
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	cw := &connWrap{conn: conn}
-	_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
-	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
-	})
-	done := make(chan struct{})
-	session := &monitorSession{userID: userID, claims: claims, conn: cw}
-	go startKeepalive(cw, done, func() bool {
-		return s.validateMonitorSession(session.userID, session.claims)
-	})
-
-	s.registerRealtime(cw, func() { s.monitors[session] = struct{}{} })
-
-	defer func() {
-		close(done)
-		s.mu.Lock()
-		delete(s.monitors, session)
 		s.mu.Unlock()
 		_ = conn.Close()
 	}()
@@ -398,6 +371,9 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, nodeID int64
 					// 广播内层 data 给前端（保持平坦结构兼容性）
 					s.broadcastTyped(nodeID, "metric", string(envelope.Data))
 				}
+				continue
+			case "SubscriptionCountersResponse":
+				// Already delivered to the rate sampler; do not send raw per-user counters to node monitors.
 				continue
 			case "UpgradeProgress":
 				s.broadcastTyped(nodeID, "upgrade_progress", msg)
@@ -705,22 +681,9 @@ func (s *Server) broadcastToRealtime(message string) {
 	for c := range s.admins {
 		admins = append(admins, c)
 	}
-	monitors := make([]*monitorSession, 0, len(s.monitors))
-	for c := range s.monitors {
-		monitors = append(monitors, c)
-	}
 	s.mu.RUnlock()
 
 	for _, c := range admins {
-		if c == nil || c.conn == nil || c.conn.conn == nil {
-			continue
-		}
-		err := writeWSMessage(c.conn, websocket.TextMessage, []byte(message))
-		if err != nil {
-			log.Printf("websocket broadcast failed: %v", err)
-		}
-	}
-	for _, c := range monitors {
 		if c == nil || c.conn == nil || c.conn.conn == nil {
 			continue
 		}
@@ -773,29 +736,6 @@ func (s *Server) validateAdminSession(userID int64, claims auth.Claims) bool {
 	}
 	state, err := s.getUserAuthState(userID)
 	if err != nil || state == nil || state.Status != 1 || state.RoleID != claims.RoleID || claims.IatMs <= state.PasswordChangedAt {
-		return false
-	}
-	return true
-}
-
-func (s *Server) validateMonitorSession(userID int64, claims auth.Claims) bool {
-	if s == nil {
-		return false
-	}
-	if claims.Exp <= time.Now().Unix() {
-		return false
-	}
-	if s.getUserAuthState != nil {
-		state, err := s.getUserAuthState(userID)
-		if err != nil || state == nil || state.Status != 1 || state.RoleID != claims.RoleID || claims.IatMs <= state.PasswordChangedAt {
-			return false
-		}
-	}
-	if s.repo == nil {
-		return false
-	}
-	allowed, err := s.repo.HasMonitorPermission(userID)
-	if err != nil || !allowed {
 		return false
 	}
 	return true

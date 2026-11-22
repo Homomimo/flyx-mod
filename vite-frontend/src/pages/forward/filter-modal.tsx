@@ -13,7 +13,6 @@ import {
 import { Tunnel } from "@/pages/forward/types";
 
 export interface ForwardFilterModalProps {
-  isAdmin: boolean;
   isSearchModalOpen: boolean;
   resetSearchParams: () => void;
   searchParams: {
@@ -34,19 +33,16 @@ export interface ForwardFilterModalProps {
     }>
   >;
   tunnels: Tunnel[];
-  uniqueUsers: { id: number; name: string }[];
 }
 
 /** Search and filter conditions for the forward list. */
 export function ForwardFilterModal({
-  isAdmin,
   isSearchModalOpen,
   resetSearchParams,
   searchParams,
   setIsSearchModalOpen,
   setSearchParams,
   tunnels,
-  uniqueUsers,
 }: ForwardFilterModalProps) {
   return (
     <Modal
@@ -66,30 +62,6 @@ export function ForwardFilterModal({
             </ModalHeader>
             <ModalBody>
               <div className="flex flex-col gap-4 py-2">
-                {isAdmin && (
-                  <Select
-                    label="所属用户"
-                    placeholder="选择用户"
-                    selectedKeys={[searchParams.userId]}
-                    variant="bordered"
-                    onSelectionChange={(keys) => {
-                      const key = Array.from(keys)[0] as string;
-
-                      setSearchParams((prev) => ({
-                        ...prev,
-                        userId: key || "all",
-                      }));
-                    }}
-                  >
-                    <SelectItem key="all">全部用户</SelectItem>
-                    {uniqueUsers.map((user) => (
-                      <SelectItem key={user.id.toString()}>
-                        {user.name}
-                      </SelectItem>
-                    ))}
-                  </Select>
-                )}
-
                 <Select
                   label="所属隧道"
                   placeholder="选择隧道"

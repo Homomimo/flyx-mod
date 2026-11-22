@@ -1,6 +1,6 @@
 // Checks the built online demo the way a visitor sees it: serves the build
-// under /flyx/demo/, opens every page in headless Chrome (as admin, then as
-// the demo user) and fails on page errors, pages that bounce to the login
+// under /flyx/demo/, opens every page in headless Chrome (as the admin, the
+// panel's only account) and fails on page errors, pages that bounce to the login
 // screen, and API calls the recording doesn't answer ("[demo] not
 // recorded", see README.md). No dependencies: Chrome DevTools Protocol over
 // Node's built-in WebSocket.
@@ -16,8 +16,7 @@ import path from "node:path";
 const dir = path.resolve(process.argv[2] || "dist-demo");
 const BASE = "/flyx/demo/";
 // Admins' 监控 redirects to 节点, which is already on the list.
-const ADMIN_PAGES = ["dashboard", "node", "inbound", "relay", "forward", "tunnel", "subscription", "limit", "user", "group", "panel-sharing", "config", "profile"];
-const USER_PAGES = ["dashboard", "my-subscriptions", "forward", "profile"];
+const ADMIN_PAGES = ["dashboard", "node", "inbound", "relay", "forward", "tunnel", "subscription", "panel-sharing", "config", "profile"];
 const SETTLE_MS = 2500;
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2" };
@@ -108,16 +107,12 @@ current = "admin (first load)";
 await page("Page.navigate", { url: `${origin}${BASE}` });
 await sleep(SETTLE_MS);
 for (const r of ADMIN_PAGES) await visit("admin", r);
-// The demo note's switch signs in as the demo user and reloads.
-await evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent.includes("普通用户视角"))?.click()`);
-await sleep(SETTLE_MS);
-for (const r of USER_PAGES) await visit("user", r);
 
 for (const n of notes) console.log(`note  ${n}`);
 for (const p of problems) console.log(`FAIL  ${p}`);
 console.log(problems.length
   ? `\n${problems.length} problem(s). Recording missing for new pages? See scripts/demo/README.md.`
-  : `demo ok: ${ADMIN_PAGES.length} admin + ${USER_PAGES.length} user pages`);
+  : `demo ok: ${ADMIN_PAGES.length} pages`);
 
 // Chrome keeps writing its profile until it has exited; clean up after
 // that, and never let cleanup decide the result.

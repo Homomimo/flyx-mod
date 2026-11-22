@@ -36,21 +36,12 @@ func TestForwardBatchPauseReturnsFailureReasonsContract(t *testing.T) {
 
 func TestForwardBatchResumeReturnsFailureReasonsContract(t *testing.T) {
 	secret := "contract-jwt-secret"
-	router, repo := setupContractRouter(t, secret)
+	router, _ := setupContractRouter(t, secret)
 	adminToken := mustAdminToken(t, secret)
-	now := time.Now().UnixMilli()
 
-	forwardID := seedForwardForBatchAction(t, repo, batchForwardSeedOptions{
-		Now:              now,
-		TunnelName:       "resume-detail-tunnel",
-		ForwardName:      "resume-detail-forward",
-		CreateUserTunnel: true,
-		UserTunnelStatus: 0,
-	})
-
-	out := postBatchRequest(t, router, adminToken, "/api/v1/forward/batch-resume", `{"ids":[`+jsonNumber(forwardID)+`]}`)
+	out := postBatchRequest(t, router, adminToken, "/api/v1/forward/batch-resume", `{"ids":[999]}`)
 	result := mustBatchResult(t, out)
-	assertBatchFailureNameAndReason(t, result, "resume-detail-forward", "该隧道已禁用")
+	assertBatchFailureReasonContains(t, result, "转发不存在")
 }
 
 func TestForwardBatchChangeTunnelReturnsFailureReasonsContract(t *testing.T) {

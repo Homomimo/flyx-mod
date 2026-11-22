@@ -137,6 +137,6 @@ raw["admin"]["node/traffic/month"] = [{"key": "", "res": {"code": 0, "msg": "操
     str(nid): [int((120 + 380 * jitter(name, "in")) * GB), int((110 + 360 * jitter(name, "out")) * GB)]
     for nid, name in node_names.items()}}}]
 
-fixtures = {"recordedAt": raw["recordedAt"], "admin": raw["admin"], "user": raw["user"]}
+fixtures = {"recordedAt": raw["recordedAt"], "admin": raw["admin"]}
 json.dump(fixtures, open(out_path, "w"), ensure_ascii=False, separators=(",", ":"))
 print("written", out_path)

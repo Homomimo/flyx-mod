@@ -20,6 +20,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// tunnelFlowBothDirections is what the tunnel's flow column holds now that
+// traffic is no longer billed: both directions count.
+const tunnelFlowBothDirections = 2
+
 func (h *Handler) tunnelCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.WriteJSON(w, response.ErrDefault("请求失败"))
@@ -30,11 +34,8 @@ func (h *Handler) tunnelCreate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("请求参数错误"))
 		return
 	}
-	flow, trafficRatio, err := parseTunnelBilling(req)
-	if err != nil {
-		response.WriteJSON(w, response.ErrDefault(err.Error()))
-		return
-	}
+	// No billing any more: every tunnel counts both directions, byte for byte.
+	flow, trafficRatio := int64(tunnelFlowBothDirections), 1.0
 	if err := validateTunnelConnectIPConstraints(req); err != nil {
 		response.WriteJSON(w, response.ErrDefault(err.Error()))
 		return
@@ -357,11 +358,8 @@ func (h *Handler) tunnelUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("请求参数错误"))
 		return
 	}
-	flow, trafficRatio, err := parseTunnelBilling(req)
-	if err != nil {
-		response.WriteJSON(w, response.ErrDefault(err.Error()))
-		return
-	}
+	// No billing any more: every tunnel counts both directions, byte for byte.
+	flow, trafficRatio := int64(tunnelFlowBothDirections), 1.0
 	if err := validateTunnelConnectIPConstraints(req); err != nil {
 		response.WriteJSON(w, response.ErrDefault(err.Error()))
 		return

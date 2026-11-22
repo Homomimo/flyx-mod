@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -40,7 +41,7 @@ const (
 // ghMirrorRepos are the repositories the panel installs from: its own
 // releases (agent, install.sh), the kernels, and the data files they read.
 func ghMirrorRepos() map[string]bool {
-	return map[string]bool{
+	repos := map[string]bool{
 		strings.ToLower(githubRepo):    true,
 		"xtls/xray-core":               true,
 		"sagernet/sing-box":            true,
@@ -53,7 +54,16 @@ func ghMirrorRepos() map[string]bool {
 		"metacubex/meta-rules-dat":     true,
 		"blackmatrix7/ios_rule_script": true,
 	}
+	// Scripts installed before the repository moved still ask for its old
+	// name; GitHub redirects those URLs to the new one.
+	for _, repo := range legacyGithubRepos {
+		repos[strings.ToLower(repo)] = true
+	}
+	return repos
 }
+
+// legacyGithubRepos are other names this project's repository has had.
+var legacyGithubRepos = []string{"kure29/flyx", "seren233/flyx"}
 
 var ghMirrorSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -240,18 +250,41 @@ func ghMirrorLatestTag(repo, file string) (string, error) {
 	if ok && time.Since(cached.at) < ghMirrorLatest {
 		return cached.tag, nil
 	}
+	if token := githubToken(); token != "" && isOwnRepo(repo) {
+		// A private repository's github.com pages need a login.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		tag, err := githubLatestTagAPI(ctx, repo, token)
+		cancel()
+		if err == nil {
+			ghMirrorTagMu.Lock()
+			ghMirrorTags[key] = ghMirrorTag{tag: tag, at: time.Now()}
+			ghMirrorTagMu.Unlock()
+			return tag, nil
+		}
+	}
 
 	client := &http.Client{
 		Timeout:       15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	lookup := func(path, marker string) (string, error) {
-		resp, err := client.Head(ghMirrorBases.github + "/" + repo + path)
+		target := ghMirrorBases.github + "/" + repo + path
+		resp, err := client.Head(target)
 		if err != nil {
 			return "", err
 		}
 		resp.Body.Close()
-		_, rest, found := strings.Cut(resp.Header.Get("Location"), marker)
+		location := resp.Header.Get("Location")
+		// A moved repository first redirects to its new name with the same
+		// path; ask there once.
+		if moved := ghMirrorMovedRepo(location, path); moved != "" && !strings.Contains(location, marker) {
+			if resp, err = client.Head(moved); err != nil {
+				return "", err
+			}
+			resp.Body.Close()
+			location = resp.Header.Get("Location")
+		}
+		_, rest, found := strings.Cut(location, marker)
 		tag, _, _ := strings.Cut(rest, "/")
 		if !found || !ghMirrorSegment.MatchString(tag) {
 			return "", fmt.Errorf("GitHub 返回 %d", resp.StatusCode)
@@ -272,6 +305,26 @@ func ghMirrorLatestTag(repo, file string) (string, error) {
 	ghMirrorTags[key] = ghMirrorTag{tag: tag, at: time.Now()}
 	ghMirrorTagMu.Unlock()
 	return tag, nil
+}
+
+// ghMirrorMovedRepo is location when it is the same path under another
+// github.com repository (what GitHub answers for a moved repository).
+func ghMirrorMovedRepo(location, path string) string {
+	u, err := url.Parse(location)
+	if err != nil || !strings.HasSuffix(u.Path, path) {
+		return ""
+	}
+	if u.Host != "" && !strings.EqualFold(u.Hostname(), "github.com") && !strings.HasPrefix(location, ghMirrorBases.github) {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(u.Path, path), "/"), "/")
+	if len(parts) != 2 || !ghMirrorSegment.MatchString(parts[0]) || !ghMirrorSegment.MatchString(parts[1]) {
+		return ""
+	}
+	if u.Host == "" {
+		return ghMirrorBases.github + u.Path
+	}
+	return location
 }
 
 func ghMirrorCacheDir() string {
@@ -327,13 +380,33 @@ func ghMirrorFetch(up *ghMirrorUpstream) (string, error) {
 }
 
 func ghMirrorDownload(rawURL, path string) error {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	token := githubToken()
+	fetchURL, asset := rawURL, false
+	if token != "" {
+		// A private repository's release files are only served through the
+		// API; the token stays on the API host (Go drops it on the redirect
+		// to the storage host).
+		if repo, tag, file, ok := ownReleaseFile(rawURL); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			u, err := githubReleaseAssetURL(ctx, repo, tag, file, token)
+			cancel()
+			if err != nil {
+				return err
+			}
+			fetchURL, asset = u, true
+		}
+	}
+	req, err := http.NewRequest(http.MethodGet, fetchURL, nil)
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(rawURL, ghMirrorBases.api) {
+	switch {
+	case asset:
+		req.Header.Set("Accept", "application/octet-stream")
+		req.Header.Set("Authorization", "Bearer "+token)
+	case strings.HasPrefix(rawURL, ghMirrorBases.api):
 		req.Header.Set("Accept", "application/vnd.github+json")
-		if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 	}
@@ -418,4 +491,22 @@ func ghMirrorPrune(dir, keep string) {
 // The panel itself then downloads from GitHub directly, not through itself.
 func isPanelGithubMirror(proxyURL string) bool {
 	return strings.HasSuffix(strings.TrimRight(proxyURL, "/"), strings.TrimRight(ghMirrorPath, "/"))
+}
+
+// ownReleaseFile splits a github.com release download URL of the panel's own
+// repository into its parts.
+func ownReleaseFile(rawURL string) (repo, tag, file string, ok bool) {
+	rest, found := strings.CutPrefix(rawURL, ghMirrorBases.github+"/")
+	if !found {
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 6 || parts[2] != "releases" || parts[3] != "download" {
+		return "", "", "", false
+	}
+	repo = parts[0] + "/" + parts[1]
+	if !isOwnRepo(repo) {
+		return "", "", "", false
+	}
+	return repo, parts[4], parts[5], true
 }

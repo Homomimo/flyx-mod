@@ -14,6 +14,12 @@ export interface NodeSystemInfo {
   udpConns?: number;
   netInSpeed?: number;
   netOutSpeed?: number;
+  /** Capacity; 0 from agents that do not report it. */
+  cpuCores?: number;
+  memUsed?: number;
+  memTotal?: number;
+  diskUsed?: number;
+  diskTotal?: number;
 }
 
 type RawSystemInfo = Record<string, string | number | undefined>;
@@ -134,5 +140,10 @@ export const buildNodeSystemInfo = (
     udpConns: toInteger(raw.udp_conns),
     netInSpeed: toInteger(raw.net_in_speed),
     netOutSpeed: toInteger(raw.net_out_speed),
+    cpuCores: toInteger(raw.cpu_cores),
+    memUsed: toFloat(raw.mem_used),
+    memTotal: toFloat(raw.mem_total),
+    diskUsed: toFloat(raw.disk_used),
+    diskTotal: toFloat(raw.disk_total),
   };
 };

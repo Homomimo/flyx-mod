@@ -73,8 +73,10 @@ func JWT(opts AuthOptions) func(http.Handler) http.Handler {
 				}
 			}
 
-			if requiresAdmin(r.URL.Path) && claims.RoleID != 0 {
-				response.WriteJSON(w, response.Err(403, "权限不足，仅管理员可操作"))
+			// FLYX is single-user: only the admin may use the panel, whatever
+			// other accounts an older version left in the database.
+			if claims.RoleID != 0 {
+				response.WriteJSON(w, response.Err(401, "只有管理员可以登录"))
 				return
 			}
 
@@ -82,22 +84,6 @@ func JWT(opts AuthOptions) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func RequireAdmin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := r.Context().Value(ClaimsContextKey)
-		claims, ok := raw.(auth.Claims)
-		if !ok {
-			response.WriteJSON(w, response.Err(401, "无法获取用户权限信息"))
-			return
-		}
-		if claims.RoleID != 0 {
-			response.WriteJSON(w, response.Err(403, "权限不足，仅管理员可操作"))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func allowsOptionalAuth(path string) bool {
@@ -118,9 +104,14 @@ func shouldSkip(path string) bool {
 		return true
 	case path == "/api/v1/user/passkey/status" || path == "/api/v1/user/passkey/login/begin" || path == "/api/v1/user/passkey/login/finish":
 		return true
+	case path == "/api/v1/user/login/methods":
+		return true
 	case path == "/api/v1/user/github/status" || path == "/api/v1/user/github/login/begin" || path == "/api/v1/user/github/login/finish":
 		return true
-	case path == "/api/v1/public/config/get":
+	case path == "/api/v1/public/config/get" || path == "/api/v1/public/status":
+		return true
+	case path == "/api/v1/public/status/history" || path == "/api/v1/public/status/ping-history" ||
+		path == "/api/v1/public/status/theme-config":
 		return true
 	case path == "/api/v1/federation/connect":
 		return true
@@ -135,63 +126,6 @@ func shouldSkip(path string) bool {
 	case path == "/api/v1/federation/runtime/diagnose":
 		return true
 	case path == "/api/v1/federation/runtime/command":
-		return true
-	default:
-		return false
-	}
-}
-
-func requiresAdmin(path string) bool {
-	if strings.HasPrefix(path, "/api/v1/monitor/permission/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/system/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/group/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/federation/share/") || strings.HasPrefix(path, "/api/v1/federation/node/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/node/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/kernel/") || strings.HasPrefix(path, "/api/v1/inbound/") ||
-		strings.HasPrefix(path, "/api/v1/notify/") || strings.HasPrefix(path, "/api/v1/subscription/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/speed-limit/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/backup/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/api/v1/backup/") {
-		return true
-	}
-
-	if strings.HasPrefix(path, "/api/v1/tunnel/") {
-		if strings.HasPrefix(path, "/api/v1/tunnel/user/tunnel") {
-			return false
-		}
-		return true
-	}
-
-	switch path {
-	case "/api/v1/user/create", "/api/v1/user/list", "/api/v1/user/update", "/api/v1/user/delete", "/api/v1/user/reset", "/api/v1/user/quota/reset":
-		return true
-	case "/api/v1/config/update", "/api/v1/config/update-single":
-		return true
-	case "/api/v1/announcement/update":
 		return true
 	default:
 		return false

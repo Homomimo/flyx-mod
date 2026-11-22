@@ -31,9 +31,10 @@ func TestReliableFlowUploadRetriesAtomically(t *testing.T) {
 		h.serveFlowUpload(w, httptest.NewRequest("POST", "/flow/upload/v2?secret=secret", strings.NewReader(string(data))), true)
 		return w.Code
 	}
-	if err := h.repo.DB().Callback().Create().Before("gorm:create").Register("test:quota_failure", func(db *gorm.DB) {
-		if db.Statement.Table == "user_quota" {
-			db.AddError(errors.New("injected quota failure"))
+	// Fail the last write of the batch, so everything before it must roll back.
+	if err := h.repo.DB().Callback().Create().Before("gorm:create").Register("test:metric_failure", func(db *gorm.DB) {
+		if db.Statement.Table == "tunnel_metric" {
+			db.AddError(errors.New("injected metric failure"))
 		}
 	}); err != nil {
 		t.Fatal(err)
@@ -46,7 +47,7 @@ func TestReliableFlowUploadRetriesAtomically(t *testing.T) {
 			t.Fatalf("partial commit %s=%d", query, got)
 		}
 	}
-	if err := h.repo.DB().Callback().Create().Remove("test:quota_failure"); err != nil {
+	if err := h.repo.DB().Callback().Create().Remove("test:metric_failure"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
@@ -54,7 +55,7 @@ func TestReliableFlowUploadRetriesAtomically(t *testing.T) {
 			t.Fatalf("retry rejected: %d", status)
 		}
 	}
-	for _, query := range []string{"SELECT in_flow FROM forward", "SELECT in_flow FROM user WHERE id=1", "SELECT in_flow FROM user_tunnel", "SELECT daily_used_bytes FROM user_quota WHERE user_id=1", "SELECT SUM(bytes_in) FROM tunnel_metric"} {
+	for _, query := range []string{"SELECT in_flow FROM forward", "SELECT in_flow FROM user WHERE id=1", "SELECT SUM(bytes_in) FROM tunnel_metric"} {
 		if got := mustHandlerCount(t, h, query); got != 100 {
 			t.Fatalf("duplicate or inconsistent accounting %s=%d", query, got)
 		}

@@ -1,4 +1,3 @@
-import type { SpeedLimitApiItem } from "@/api/types";
 import type { Dispatch, SetStateAction } from "react";
 
 import { Button } from "@/shadcn-bridge/heroui/button";
@@ -16,7 +15,6 @@ import { Accordion, AccordionItem } from "@/shadcn-bridge/heroui/accordion";
 import { Tunnel, ForwardForm } from "@/pages/forward/types";
 
 export interface ForwardFormModalProps {
-  availableSpeedLimits: SpeedLimitApiItem[];
   currentTunnelIpOptions: string[];
   currentTunnelPortRange: { min: number; max: number } | null;
   errors: { [key: string]: string };
@@ -24,12 +22,9 @@ export interface ForwardFormModalProps {
   getAddressCount: (addressString: string) => number;
   handleSubmit: () => Promise<void>;
   handleTunnelChange: (tunnelId: string) => void;
-  isAdmin: boolean;
   isCurrentTunnelMultiEntrance: boolean;
   isEdit: boolean;
   modalOpen: boolean;
-  selectedIPSpeedId: number | null;
-  selectedSpeedId: number | null;
   setForm: Dispatch<SetStateAction<ForwardForm>>;
   setInIpTouched: Dispatch<SetStateAction<boolean>>;
   setModalOpen: Dispatch<SetStateAction<boolean>>;
@@ -39,7 +34,6 @@ export interface ForwardFormModalProps {
 
 /** Create or edit a forward. */
 export function ForwardFormModal({
-  availableSpeedLimits,
   currentTunnelIpOptions,
   currentTunnelPortRange,
   errors,
@@ -47,12 +41,9 @@ export function ForwardFormModal({
   getAddressCount,
   handleSubmit,
   handleTunnelChange,
-  isAdmin,
   isCurrentTunnelMultiEntrance,
   isEdit,
   modalOpen,
-  selectedIPSpeedId,
-  selectedSpeedId,
   setForm,
   setInIpTouched,
   setModalOpen,
@@ -232,46 +223,6 @@ export function ForwardFormModal({
                     }
                   >
                     <div className="space-y-4 pb-2">
-                      <Input
-                        description="大于 0 时优先于用户全局限制；0 或空表示使用用户全局限制，用户也为 0 时不限制。"
-                        label="最大连接数"
-                        min="0"
-                        placeholder="0 或空表示使用用户全局限制"
-                        type="number"
-                        value={
-                          form.maxConn === 0 ? "" : String(form.maxConn || "")
-                        }
-                        variant="bordered"
-                        onChange={(e) => {
-                          const value = Math.max(
-                            Number(e.target.value) || 0,
-                            0,
-                          );
-
-                          setForm((prev) => ({ ...prev, maxConn: value }));
-                        }}
-                      />
-                      <Input
-                        description="每个客户端 IP 可同时建立的最大连接数；0 或空表示不限制。"
-                        label="每 IP 最大连接数"
-                        min="0"
-                        placeholder="0 或空表示不限制"
-                        type="number"
-                        value={
-                          form.ipMaxConn === 0
-                            ? ""
-                            : String(form.ipMaxConn || "")
-                        }
-                        variant="bordered"
-                        onChange={(e) => {
-                          const value = Math.max(
-                            Number(e.target.value) || 0,
-                            0,
-                          );
-
-                          setForm((prev) => ({ ...prev, ipMaxConn: value }));
-                        }}
-                      />
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Select
                           description="入口监听接收 PROXY protocol，用于读取上游传入的真实客户端 IP。"
@@ -316,71 +267,6 @@ export function ForwardFormModal({
                           <SelectItem key="2">Version 2</SelectItem>
                         </Select>
                       </div>
-                      {isAdmin && (
-                        <Select
-                          label="规则限速"
-                          placeholder="不限速"
-                          selectedKeys={
-                            selectedSpeedId !== null
-                              ? [selectedSpeedId.toString()]
-                              : []
-                          }
-                          variant="bordered"
-                          onSelectionChange={(keys) => {
-                            const selectedKey = Array.from(keys)[0] as
-                              | string
-                              | undefined;
-
-                            setForm((prev) => ({
-                              ...prev,
-                              speedId: selectedKey ? Number(selectedKey) : null,
-                            }));
-                          }}
-                        >
-                          {availableSpeedLimits.map((speedLimit) => (
-                            <SelectItem
-                              key={speedLimit.id.toString()}
-                              textValue={speedLimit.name}
-                            >
-                              {speedLimit.name}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      )}
-                      {isAdmin && (
-                        <Select
-                          description="每个客户端 IP 独享该限速规则；不选择表示不限制。"
-                          label="每 IP 限速"
-                          placeholder="不限速"
-                          selectedKeys={
-                            selectedIPSpeedId !== null
-                              ? [selectedIPSpeedId.toString()]
-                              : []
-                          }
-                          variant="bordered"
-                          onSelectionChange={(keys) => {
-                            const selectedKey = Array.from(keys)[0] as
-                              | string
-                              | undefined;
-
-                            setForm((prev) => ({
-                              ...prev,
-                              ipSpeedId: selectedKey
-                                ? Number(selectedKey)
-                                : null,
-                            }));
-                          }}
-                        >
-                          {availableSpeedLimits.map((speedLimit) => (
-                            <SelectItem
-                              key={speedLimit.id.toString()}
-                              textValue={speedLimit.name}
-                            >
-                              {speedLimit.name}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      )}
                     </div>
                   </AccordionItem>
                 </Accordion>

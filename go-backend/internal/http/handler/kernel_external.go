@@ -365,7 +365,7 @@ func (h *Handler) retargetRelays(row *model.NodeInbound) []string {
 			continue
 		}
 		if err := h.repo.UpdateForward(fwd.ID, fwd.Name, fwd.TunnelID, target, fwd.Strategy, time.Now().UnixMilli(),
-			fwd.SpeedID, fwd.MaxConn, fwd.IPMaxConn, fwd.IPSpeedID, 0, fwd.ProxyProtocolReceive, fwd.ProxyProtocolSend); err != nil {
+			0, fwd.ProxyProtocolReceive, fwd.ProxyProtocolSend); err != nil {
 			problems = append(problems, rel.Name+": "+err.Error())
 			continue
 		}

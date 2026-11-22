@@ -181,8 +181,24 @@ func (h *Handler) githubStatus(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, response.OK(map[string]bool{"enabled": ok}))
 }
 
-// adminPasswordLoginDisabled reports whether admins must log in with GitHub
-// or a passkey; ordinary users keep their password either way. It only
+// loginMethods tells the login page which ways in to offer, without a
+// login: the password form only while password login is allowed.
+func (h *Handler) loginMethods(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+	_, _, github := h.githubOAuthConfig()
+	wa, _ := passkeyConfig()
+	response.WriteJSON(w, response.OK(map[string]bool{
+		"password": !h.adminPasswordLoginDisabled(),
+		"github":   github,
+		"passkey":  wa != nil,
+	}))
+}
+
+// adminPasswordLoginDisabled reports whether the admin must log in with
+// GitHub or a passkey, the login page then offering no password form. It only
 // holds while GitHub login is on and configured, so turning GitHub login
 // off (or breaking its config) brings admin password login back instead of
 // locking admins out. `paneld enable-password-login` clears it.
@@ -212,7 +228,7 @@ func (h *Handler) checkPasswordLoginSwitch(payload map[string]string) error {
 		return ""
 	}
 	if value("github_login_enabled") != "true" || value("github_oauth_client_id") == "" || value("github_oauth_secret") == "" {
-		return errors.New("请先启用并配置 GitHub 登录，再禁止管理员使用密码登录")
+		return errors.New("请先启用并配置 GitHub 登录，再禁止密码登录")
 	}
 	unbound, err := h.repo.ListAdminsWithoutGithub()
 	if err != nil {
@@ -284,6 +300,10 @@ func (h *Handler) githubLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.Status != 1 {
 		response.WriteJSON(w, response.ErrDefault("账号被停用"))
+		return
+	}
+	if user.RoleID != 0 {
+		response.WriteJSON(w, response.ErrDefault("只有管理员可以登录"))
 		return
 	}
 	token, err := auth.GenerateTokenAt(user.ID, user.User, user.RoleID, h.jwtSecret, time.Now())
@@ -433,7 +453,7 @@ func (h *Handler) githubUnbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user, err := h.repo.GetUserByID(userID); err == nil && user != nil && user.RoleID == 0 && h.adminPasswordLoginDisabled() {
-		response.WriteJSON(w, response.ErrDefault("已禁止管理员使用密码登录，解绑后将无法登录；请先在设置中关闭该开关"))
+		response.WriteJSON(w, response.ErrDefault("已禁止密码登录，解绑后将无法登录；请先在设置中关闭该开关"))
 		return
 	}
 	deleted, err := h.repo.DeleteUserGithub(userID)

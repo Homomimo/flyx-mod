@@ -64,11 +64,3 @@ export const SubTrafficStats = lazyNamed(
     import("@/pages/subscription/traffic-stats").then((m) => m.SubTrafficStats),
   loading,
 );
-
-export const FlowChartCard = lazyNamed(
-  () =>
-    import("@/pages/dashboard/components/flow-chart-card").then(
-      (m) => m.FlowChartCard,
-    ),
-  null,
-);

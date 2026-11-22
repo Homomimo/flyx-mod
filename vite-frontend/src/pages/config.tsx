@@ -4,13 +4,23 @@ import type {
   SystemUpgradeVersionApiData,
 } from "@/api/types";
 
-import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Activity,
+  Archive,
+  Bell,
+  Gauge,
+  Palette,
+  RefreshCw,
+  Server,
+  Settings2,
+  Shield,
+} from "lucide-react";
 import toast from "react-hot-toast";
 
 import { Button } from "@/shadcn-bridge/heroui/button";
 import { Input } from "@/shadcn-bridge/heroui/input";
-import { Textarea } from "@/shadcn-bridge/heroui/input";
 import { Spinner } from "@/shadcn-bridge/heroui/spinner";
 import { Switch } from "@/shadcn-bridge/heroui/switch";
 import { Select, SelectItem } from "@/shadcn-bridge/heroui/select";
@@ -26,26 +36,37 @@ import {
   updateConfigs,
   exportBackup,
   importBackup,
-  getAnnouncement,
-  updateAnnouncement,
   getStorageSummary,
   getSystemUpgradeVersion,
   checkSystemUpgrade,
   runSystemUpgrade,
-  type AnnouncementData,
 } from "@/api";
 import { AnimatedPage } from "@/components/animated-page";
 import { PageHeader, PageTabs } from "@/components/page-kit";
 import { ThemeSettings } from "@/components/theme-settings";
 import { useH5Mode } from "@/hooks/useH5Mode";
+import {
+  consumeInAppBack,
+  historyIndex,
+  isBrowserBack,
+  markInAppBack,
+} from "@/hooks/useRouteTransition";
 import { NotifySettings, notifySummary } from "@/pages/config/notify-card";
+import {
+  StatusPageSettings,
+  statusPageSummary,
+} from "@/pages/config/status-page-card";
 import {
   LATENCY_TARGETS_KEY,
   LatencySettings,
   latencySummary,
 } from "@/pages/config/latency-card";
 import {
+  type ConfigSearchHit,
+  ConfigIndex,
   ConfigLayoutContext,
+  ConfigSearchBox,
+  ConfigSearchResults,
   ConfigSection,
   Field,
   SubHeading,
@@ -202,7 +223,7 @@ const CONFIG_ITEMS: ConfigItem[] = [
     key: "github_login_enabled",
     label: "启用 GitHub 登录",
     description:
-      "用户在个人中心绑定 GitHub 账号后，可在登录页用 GitHub 登录；未绑定的账号无法登录",
+      "在个人资料页绑定 GitHub 账号后，可在登录页用 GitHub 登录；没绑定过的 GitHub 账号无法登录",
     type: "switch",
   },
   {
@@ -225,9 +246,9 @@ const CONFIG_ITEMS: ConfigItem[] = [
   },
   {
     key: "admin_password_login_disabled",
-    label: "禁止管理员使用密码登录",
+    label: "禁止密码登录",
     description:
-      "管理员账号只能用 GitHub 或通行证密钥登录，普通用户照常用密码登录。需所有管理员先绑定 GitHub。被锁在外面时，在服务器执行 docker compose exec backend /app/paneld enable-password-login 恢复",
+      "登录页不再显示账号密码，只能用 GitHub 或通行证密钥登录，密码泄露也进不来。需先在个人资料页绑定 GitHub。被锁在外面时，在面板服务器执行 docker compose exec backend /app/paneld enable-password-login 重新开启",
     type: "switch",
     dependsOn: "github_login_enabled",
     dependsValue: "true",
@@ -249,13 +270,6 @@ const CONFIG_ITEMS: ConfigItem[] = [
     dependsValue: "true",
   },
   {
-    key: "allow_local_remote_addr",
-    label: "允许转发到本地地址",
-    description:
-      "普通用户的规则可指向 127.0.0.1、10.x、172.16–31.x、192.168.x 等内网地址；默认关闭，避免成为开放代理",
-    type: "switch",
-  },
-  {
     key: "fetch_allow_local",
     label: "拉取订阅可访问内网地址",
     description:
@@ -265,15 +279,10 @@ const CONFIG_ITEMS: ConfigItem[] = [
 ];
 
 const BACKUP_TYPE_OPTIONS = [
-  { value: "users", label: "用户" },
+  { value: "users", label: "管理员账号" },
   { value: "nodes", label: "服务器" },
   { value: "tunnels", label: "隧道" },
   { value: "forwards", label: "规则" },
-  { value: "userTunnels", label: "用户隧道权限" },
-  { value: "speedLimits", label: "限速规则" },
-  { value: "tunnelGroups", label: "隧道分组" },
-  { value: "userGroups", label: "用户分组" },
-  { value: "permissions", label: "分组权限" },
   { value: "configs", label: "系统配置" },
   { value: "inbounds", label: "内核与入站" },
 ] as const;
@@ -304,7 +313,6 @@ const getInitialConfigs = (): Record<string, string> => {
     "app_bg_image_dark",
     "github_proxy_enabled",
     "github_proxy_url",
-    "allow_local_remote_addr",
     "fetch_allow_local",
     "hide_footer_brand",
   ];
@@ -330,11 +338,11 @@ type SectionKey =
   | "network"
   | "latency"
   | "notify"
-  | "announcement"
+  | "statuspage"
   | "backup"
   | "system";
 
-// The groups in page order, for the desktop nav.
+// The groups in page order: desktop tabs, the phone's list.
 const SECTIONS: Array<[SectionKey, string]> = [
   ["basic", "基本"],
   ["appearance", "外观"],
@@ -342,9 +350,52 @@ const SECTIONS: Array<[SectionKey, string]> = [
   ["network", "服务器与监控"],
   ["latency", "延迟测试点"],
   ["notify", "通知"],
-  ["announcement", "公告"],
+  ["statuspage", "状态页"],
   ["backup", "备份与恢复"],
   ["system", "系统与升级"],
+];
+
+const SECTION_ICONS: Record<SectionKey, React.ReactNode> = {
+  basic: <Settings2 />,
+  appearance: <Palette />,
+  security: <Shield />,
+  network: <Server />,
+  latency: <Gauge />,
+  notify: <Bell />,
+  statuspage: <Activity />,
+  backup: <Archive />,
+  system: <RefreshCw />,
+};
+
+const isSectionKey = (v: string | null): v is SectionKey =>
+  SECTIONS.some(([key]) => key === v);
+
+// Settings the search finds besides CONFIG_ITEMS: the fields of the groups
+// drawn by their own components, by the label they show.
+const SEARCH_EXTRA: Array<[SectionKey, string, string?]> = [
+  ["appearance", "主题", "配色、浅色 / 深色"],
+  ["latency", "预设测试点", "名称、地址、端口"],
+  ["latency", "延迟阈值"],
+  ["latency", "丢包阈值"],
+  ["notify", "启用通知"],
+  ["notify", "Telegram", "机器人令牌、会话 ID"],
+  ["notify", "机器人令牌（Bot Token）"],
+  ["notify", "会话 ID（Chat ID）"],
+  ["notify", "Webhook", "Webhook 地址"],
+  ["notify", "通知哪些事件（全局默认）"],
+  ["notify", "每日汇总发送时间"],
+  ["statuspage", "状态页", "开启公开状态页"],
+  ["statuspage", "标题"],
+  ["statuspage", "显示哪些服务器"],
+  ["statuspage", "显示价格", "价格和付款周期"],
+  ["statuspage", "分组方式", "按分组或按地区"],
+  ["statuspage", "主题", "状态页主题"],
+  ["backup", "导出数据", "JSON 备份"],
+  ["backup", "导入数据"],
+  ["backup", "数据库占用"],
+  ["backup", "上传到 GitHub Gist", "自动上传、加密密码"],
+  ["system", "面板自升级", "检查更新、立即升级"],
+  ["system", "目标版本", "更新通道"],
 ];
 
 // 每个分组包含的配置项，用于判断分组是否有未保存的修改
@@ -372,7 +423,6 @@ const SECTION_CONFIG_KEYS: Partial<Record<SectionKey, string[]>> = {
     "github_oauth_client_id",
     "github_oauth_secret",
     "admin_password_login_disabled",
-    "allow_local_remote_addr",
     "fetch_allow_local",
   ],
   network: [
@@ -385,8 +435,7 @@ const SECTION_CONFIG_KEYS: Partial<Record<SectionKey, string[]>> = {
 };
 
 const describeBackground = (value?: string) => {
-  if (!value) return "默认纯色背景";
-  if (value === "wallpaper") return "内置壁纸";
+  if (!value || value === "wallpaper") return "默认纯色背景";
   if (value === "theme") return "自适应纯色";
   if (/^(https?:|data:|\/|blob:)/.test(value)) return "自定义图片";
 
@@ -417,21 +466,82 @@ function panelMirrorURL(ip: string): string {
 
 export default function ConfigPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const isH5 = useH5Mode();
-  // Desktop shows one group beside the nav; a phone lists the groups and
+  // The open group is in the address (?section=), so the browser's back and
+  // the phone's swipe back return to the list instead of leaving the page.
+  // Desktop shows one group under the tabs; a phone lists the groups and
   // opens one at a time.
-  const [active, setActive] = useState<SectionKey | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sectionParam = searchParams.get("section");
+  const active: SectionKey | null = isSectionKey(sectionParam)
+    ? sectionParam
+    : null;
   const shown: SectionKey | null = active ?? (isH5 ? null : "basic");
-  const selectSection = (key: SectionKey | null) => {
-    setActive(key);
-    requestAnimationFrame(() =>
-      document.querySelector("main")?.scrollTo({ top: 0 }),
+  const [visited, setVisited] = useState<ReadonlySet<string>>(new Set());
+  const [transition, setTransition] = useState<"push" | "pop" | null>(null);
+  const [query, setQuery] = useState("");
+  const prevShown = useRef(shown);
+  const prevIndex = useRef(historyIndex());
+
+  useLayoutEffect(() => {
+    if (shown && !visited.has(shown)) {
+      setVisited((v) => new Set(v).add(shown));
+    }
+    if (prevShown.current === shown) return;
+    // A browser back (iOS swipe back) is animated by the browser already.
+    const browserBack = isBrowserBack(prevIndex.current, historyIndex());
+
+    consumeInAppBack();
+    prevIndex.current = historyIndex();
+    if (isH5 && !browserBack) setTransition(shown ? "push" : "pop");
+    prevShown.current = shown;
+    // The phone scrolls the document, the desktop layout its <main>.
+    window.scrollTo({ top: 0 });
+    document.querySelector("main")?.scrollTo({ top: 0 });
+  }, [shown, isH5, visited]);
+
+  const openSection = (key: SectionKey, replace = false) =>
+    setSearchParams(
+      { section: key },
+      // Opened from the list: a history entry, so back returns to it.
+      { replace, state: replace ? undefined : { fromIndex: true } },
     );
+  const backToIndex = () => {
+    if ((location.state as { fromIndex?: boolean } | null)?.fromIndex) {
+      markInAppBack();
+      navigate(-1);
+    } else {
+      setSearchParams({}, { replace: true });
+    }
   };
   const layout = {
     mode: isH5 ? ("stack" as const) : ("split" as const),
     active: shown,
-    select: (id: string | null) => selectSection(id as SectionKey | null),
+    visited,
+    transition,
+    onTransitionEnd: () => setTransition(null),
+    back: backToIndex,
+  };
+
+  // A search result: open its group, then bring the setting into view.
+  const pickSearchHit = (hit: ConfigSearchHit) => {
+    setQuery("");
+    openSection(hit.section as SectionKey, !isH5);
+    window.setTimeout(() => {
+      const root = document.getElementById(`config-${hit.section}`);
+      const label = Array.from(
+        root?.querySelectorAll<HTMLElement>("p, h3, label, span") ?? [],
+      ).find((el) => el.textContent?.trim().startsWith(hit.label));
+      const target =
+        label?.closest<HTMLElement>("[data-field]") ?? label ?? null;
+
+      if (!target) return;
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      target.classList.remove("config-field-flash");
+      void target.offsetWidth;
+      target.classList.add("config-field-flash");
+    }, 320);
   };
   const initialConfigs = getInitialConfigs();
   const [configs, setConfigs] =
@@ -462,12 +572,6 @@ export default function ConfigPage() {
     null,
   );
 
-  const [announcement, setAnnouncement] = useState<AnnouncementData>({
-    content: "",
-    enabled: 0,
-  });
-  const [announcementLoading, setAnnouncementLoading] = useState(true);
-  const [announcementSaving, setAnnouncementSaving] = useState(false);
   const updateChannel: UpdateReleaseChannel = getUpdateReleaseChannel();
   const [systemUpgradeInfo, setSystemUpgradeInfo] =
     useState<SystemUpgradeVersionApiData | null>(null);
@@ -597,44 +701,12 @@ export default function ConfigPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       loadConfigs(initialConfigs);
-      loadAnnouncement();
       loadStorageSummary();
       void loadSystemUpgradeInfo();
     }, 100);
 
     return () => clearTimeout(timer);
   }, []);
-
-  const loadAnnouncement = async () => {
-    setAnnouncementLoading(true);
-    try {
-      const res = await getAnnouncement();
-
-      if (res.code === 0 && res.data) {
-        setAnnouncement(res.data);
-      }
-    } catch {
-    } finally {
-      setAnnouncementLoading(false);
-    }
-  };
-
-  const saveAnnouncement = async () => {
-    setAnnouncementSaving(true);
-    try {
-      const res = await updateAnnouncement(announcement);
-
-      if (res.code === 0) {
-        toast.success("公告保存成功");
-      } else {
-        toast.error(res.msg || "保存失败");
-      }
-    } catch {
-      toast.error("保存公告失败，请重试");
-    } finally {
-      setAnnouncementSaving(false);
-    }
-  };
 
   const handleCheckSystemUpgrade = async () => {
     const channel = updateChannel;
@@ -744,7 +816,7 @@ export default function ConfigPage() {
 
     if (intervalError) {
       toast.error(intervalError);
-      selectSection("network");
+      openSection("network", shown !== null);
 
       return;
     }
@@ -973,8 +1045,9 @@ export default function ConfigPage() {
       bgImage.startsWith("/") ||
       bgImage.startsWith("blob:");
     const isTheme = bgImage === "theme";
-    const isWallpaper = bgImage === "wallpaper";
-    const isSolidColor = bgImage && !isImage && !isTheme && !isWallpaper;
+    // "wallpaper" was the built-in picture, since removed: shown as default.
+    const isSolidColor =
+      bgImage && !isImage && !isTheme && bgImage !== "wallpaper";
     const isChanged = configs[key] !== originalConfigs[key];
 
     return (
@@ -1026,16 +1099,6 @@ export default function ConfigPage() {
           >
             上传图片
           </Button>
-          {isDefault && (
-            <Button
-              isDisabled={bgImageUploading !== null || isWallpaper}
-              size="sm"
-              variant="flat"
-              onPress={() => handleConfigChange(key, "wallpaper")}
-            >
-              内置壁纸
-            </Button>
-          )}
           {isDefault && (
             <Button
               isDisabled={bgImageUploading !== null || bgImage === "#ffffff"}
@@ -1514,9 +1577,9 @@ export default function ConfigPage() {
   }
 
   const sectionChanged = (key: SectionKey) =>
-    (key === "notify"
+    (key === "notify" || key === "statuspage"
       ? Object.keys({ ...configs, ...originalConfigs }).filter((k) =>
-          k.startsWith("notify_"),
+          k.startsWith(key === "notify" ? "notify_" : "status_page_"),
         )
       : (SECTION_CONFIG_KEYS[key] ?? [])
     ).some((k) => configs[k] !== originalConfigs[k]);
@@ -1551,15 +1614,108 @@ export default function ConfigPage() {
     .filter(Boolean)
     .join(" · ");
 
+  const summaries: Record<SectionKey, React.ReactNode> = {
+    basic: `${configs.app_name || "未设置名称"} · ${
+      configs.ip || "未填后端地址"
+    }`,
+    appearance: `${describeBackground(configs.app_bg_image)} · 规则精简模式${onOff(
+      "forward_compact_mode",
+    )}`,
+    security: `登录验证码${onOff("captcha_enabled")} · GitHub 登录${onOff(
+      "github_login_enabled",
+    )} · 拉取内网订阅${onOff("fetch_allow_local", "允许", "禁止")}`,
+    network: `${tunnelQualitySummary} · 监控保留 ${
+      configs.monitor_retention_days || 7
+    } 天 · GitHub 加速${onOff("github_proxy_enabled")}`,
+    latency: latencySummary(configs),
+    notify: notifySummary(configs),
+    statuspage: statusPageSummary(configs),
+    backup: importing
+      ? "正在导入..."
+      : exporting
+        ? "正在导出..."
+        : "导出或导入 JSON 备份",
+    system: systemSummary,
+  };
+
+  const searchText = query.trim().toLowerCase();
+  const searchHits: ConfigSearchHit[] = !searchText
+    ? []
+    : [
+        ...SECTIONS.flatMap(([key, title]) =>
+          (SECTION_CONFIG_KEYS[key] ?? [])
+            .flatMap((k) => {
+              const item = CONFIG_ITEMS.find((i) => i.key === k);
+
+              return item ? [[key, item.label, item.description] as const] : [];
+            })
+            .map(([key, label, help]) => ({
+              section: key,
+              sectionTitle: title,
+              icon: SECTION_ICONS[key],
+              label,
+              help,
+            })),
+        ),
+        ...SEARCH_EXTRA.map(([key, label, help]) => ({
+          section: key,
+          sectionTitle: SECTIONS.find(([k]) => k === key)?.[1] ?? key,
+          icon: SECTION_ICONS[key],
+          label,
+          help,
+        })),
+        // A group's own name finds the group.
+        ...SECTIONS.map(([key, title]) => ({
+          section: key,
+          sectionTitle: "分组",
+          icon: SECTION_ICONS[key],
+          label: title,
+          help: undefined,
+        })),
+      ].filter((hit) =>
+        `${hit.label} ${hit.help ?? ""} ${hit.sectionTitle}`
+          .toLowerCase()
+          .includes(searchText),
+      );
+
   return (
-    <AnimatedPage className="mx-auto max-w-4xl px-4 py-6 lg:px-10 lg:py-8">
-      <PageHeader
-        description="面板名称、登录安全、通知、备份与升级"
-        title="网站配置"
-      />
+    <AnimatedPage
+      className={
+        isH5
+          ? // The phone layout supplies the grey page.
+            "overflow-x-clip px-4 pb-6 pt-2"
+          : "mx-auto max-w-4xl px-4 py-6 lg:px-10 lg:py-8"
+      }
+    >
+      {!(isH5 && shown) && (
+        <PageHeader
+          description="面板名称、登录安全、通知、备份与升级"
+          title="网站配置"
+        />
+      )}
 
       <ConfigLayoutContext.Provider value={layout}>
-        {!isH5 && (
+        {!(isH5 && shown) && (
+          <div className="mb-4 sm:max-w-sm">
+            <ConfigSearchBox value={query} onChange={setQuery} />
+          </div>
+        )}
+        {searchText && (
+          <ConfigSearchResults hits={searchHits} onPick={pickSearchHit} />
+        )}
+        {isH5 && shown === null && !searchText && (
+          <ConfigIndex
+            items={SECTIONS.map(([key, title]) => ({
+              id: key,
+              title,
+              icon: SECTION_ICONS[key],
+              summary: summaries[key],
+              changed: sectionChanged(key),
+            }))}
+            onOpen={(id) => openSection(id as SectionKey)}
+          />
+        )}
+        {!isH5 && !searchText && (
           // Same tabs as the other pages; a dot marks unsaved edits.
           <PageTabs
             tabs={SECTIONS.map(([key, label]) => ({
@@ -1573,17 +1729,13 @@ export default function ConfigPage() {
               ) : undefined,
             }))}
             value={shown ?? "basic"}
-            onChange={selectSection}
+            onChange={(key) => openSection(key, true)}
           />
         )}
-        <div
-          className={isH5 && shown === null ? "border-t border-divider" : ""}
-        >
+        <div hidden={!!searchText}>
           <ConfigSection
             {...sectionProps("basic")}
-            summary={`${configs.app_name || "未设置名称"} · ${
-              configs.ip || "未填后端地址"
-            }`}
+            summary={summaries.basic}
             title="基本"
           >
             {renderItem("app_name")}
@@ -1596,9 +1748,7 @@ export default function ConfigPage() {
 
           <ConfigSection
             {...sectionProps("appearance")}
-            summary={`${describeBackground(configs.app_bg_image)} · 规则精简模式${onOff(
-              "forward_compact_mode",
-            )}`}
+            summary={summaries.appearance}
             title="外观"
           >
             {renderItem("app_bg_image")}
@@ -1611,13 +1761,7 @@ export default function ConfigPage() {
 
           <ConfigSection
             {...sectionProps("security")}
-            summary={`登录验证码${onOff("captcha_enabled")} · GitHub 登录${onOff(
-              "github_login_enabled",
-            )} · 转发到内网地址${onOff(
-              "allow_local_remote_addr",
-              "允许",
-              "禁止",
-            )} · 拉取内网订阅${onOff("fetch_allow_local", "允许", "禁止")}`}
+            summary={summaries.security}
             title="安全与登录"
           >
             {renderItem("captcha_enabled")}
@@ -1627,15 +1771,12 @@ export default function ConfigPage() {
             {renderItem("github_oauth_client_id")}
             {renderItem("github_oauth_secret")}
             {renderItem("admin_password_login_disabled")}
-            {renderItem("allow_local_remote_addr")}
             {renderItem("fetch_allow_local")}
           </ConfigSection>
 
           <ConfigSection
             {...sectionProps("network")}
-            summary={`${tunnelQualitySummary} · 监控保留 ${
-              configs.monitor_retention_days || 7
-            } 天 · GitHub 加速${onOff("github_proxy_enabled")}`}
+            summary={summaries.network}
             title="服务器与监控"
           >
             {renderItem("monitor_tunnel_quality_enabled")}
@@ -1647,7 +1788,7 @@ export default function ConfigPage() {
 
           <ConfigSection
             {...sectionProps("latency")}
-            summary={latencySummary(configs)}
+            summary={summaries.latency}
             title="延迟测试点"
           >
             <LatencySettings configs={configs} onChange={handleConfigChange} />
@@ -1655,7 +1796,7 @@ export default function ConfigPage() {
 
           <ConfigSection
             {...sectionProps("notify")}
-            summary={notifySummary(configs)}
+            summary={summaries.notify}
             title="通知"
           >
             <NotifySettings
@@ -1666,82 +1807,20 @@ export default function ConfigPage() {
           </ConfigSection>
 
           <ConfigSection
-            {...sectionProps("announcement")}
-            summary={
-              announcementLoading
-                ? "加载中..."
-                : announcement.enabled === 1
-                  ? "首页显示中（单独保存）"
-                  : "未启用（单独保存）"
-            }
-            title="公告"
+            {...sectionProps("statuspage")}
+            summary={summaries.statuspage}
+            title="状态页"
           >
-            {announcementLoading ? (
-              <div className="flex justify-center py-4">
-                <Spinner size="sm" />
-              </div>
-            ) : (
-              <>
-                <Field inline help="启用后在首页顶部显示" label="显示公告">
-                  <Switch
-                    aria-label="显示公告"
-                    isSelected={announcement.enabled === 1}
-                    size="sm"
-                    onValueChange={(checked) =>
-                      setAnnouncement({
-                        ...announcement,
-                        enabled: checked ? 1 : 0,
-                      })
-                    }
-                  />
-                </Field>
-
-                <Field
-                  help="支持 Markdown，链接在新标签页打开"
-                  label="公告内容"
-                >
-                  <Textarea
-                    aria-label="公告内容"
-                    minRows={4}
-                    placeholder="例如：**加粗**、[链接](https://example.com)、- 列表"
-                    value={announcement.content}
-                    variant="bordered"
-                    onChange={(e) =>
-                      setAnnouncement({
-                        ...announcement,
-                        content: e.target.value,
-                      })
-                    }
-                  />
-                </Field>
-
-                <div className="flex items-center justify-between gap-3 border-t border-divider pt-3">
-                  <span className="text-xs text-default-500">
-                    公告单独保存，不随下方“保存”提交
-                  </span>
-                  <Button
-                    className="shrink-0"
-                    color="primary"
-                    isLoading={announcementSaving}
-                    size="sm"
-                    onPress={saveAnnouncement}
-                  >
-                    保存公告
-                  </Button>
-                </div>
-              </>
-            )}
+            <StatusPageSettings
+              configs={configs}
+              originalConfigs={originalConfigs}
+              onChange={handleConfigChange}
+            />
           </ConfigSection>
 
           <ConfigSection
             {...sectionProps("backup")}
-            summary={
-              importing
-                ? "正在导入..."
-                : exporting
-                  ? "正在导出..."
-                  : "导出或导入 JSON 备份"
-            }
+            summary={summaries.backup}
             title="备份与恢复"
           >
             <Field
@@ -1790,7 +1869,7 @@ export default function ConfigPage() {
 
           <ConfigSection
             {...sectionProps("system")}
-            summary={systemSummary}
+            summary={summaries.system}
             title="系统与升级"
           >
             <Field
@@ -1928,7 +2007,7 @@ export default function ConfigPage() {
       {hasChanges && (
         <div
           className={`sticky z-20 mt-4 flex items-center gap-3 rounded-lg border border-divider bg-background px-3 py-2 shadow-sm ${
-            isH5 ? "bottom-[calc(4.5rem+var(--safe-area-bottom))]" : "bottom-4"
+            isH5 ? "bottom-[calc(5rem+var(--safe-area-bottom))]" : "bottom-4"
           }`}
         >
           <span className="min-w-0 flex-1 truncate text-xs text-warning-700 dark:text-warning-300">

@@ -116,10 +116,6 @@ export function DeleteTunnelModal({
                                 :{forward.inPort || 0}
                               </span>
                             </div>
-                            <p className="mt-1 text-xs text-default-500">
-                              用户：
-                              {forward.userName || `#${forward.userId}`}
-                            </p>
                           </div>
                         ))}
                       </div>
@@ -343,10 +339,6 @@ export function BatchDeleteTunnelsModal({
                                     :{forward.inPort || 0}
                                   </span>
                                 </div>
-                                <p className="mt-1 text-[11px] text-default-500">
-                                  用户：
-                                  {forward.userName || `#${forward.userId}`}
-                                </p>
                               </div>
                             ))}
                             {item.forwardCount > item.sampleForwards.length ? (

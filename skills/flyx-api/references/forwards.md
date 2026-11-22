@@ -61,8 +61,7 @@ Create a new forward.
   "tunnelId": 1,
   "remoteAddr": "192.168.1.100:80",
   "strategy": "fifo",
-  "inPort": 0,
-  "speedId": 0
+  "inPort": 0
 }
 ```
 
@@ -75,7 +74,6 @@ Create a new forward.
 | remoteAddr | string | Yes | Target address(es), comma-separated for load balancing |
 | strategy | string | No | "fifo" or "round" (default: "fifo") |
 | inPort | number | No | Entry port (0 = auto-assign) |
-| speedId | number | No | Speed limit rule ID (0 = no limit) |
 
 **Strategy:**
 - `fifo` = First target only
@@ -108,8 +106,7 @@ Update forward settings.
   "id": 1,
   "name": "my-web-server-updated",
   "remoteAddr": "192.168.1.100:8080",
-  "strategy": "round",
-  "speedId": 2
+  "strategy": "round"
 }
 ```
 

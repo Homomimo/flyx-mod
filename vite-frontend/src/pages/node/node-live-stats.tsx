@@ -12,6 +12,9 @@ function bytes(v: number): string {
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)}${units[i]}`;
 }
 
+const capacity = (used?: number, total?: number) =>
+  total ? `${bytes(used ?? 0)} / ${bytes(total)}` : "";
+
 /**
  * A node's live resources on its list row: CPU, memory and disk, speed
  * and this month's traffic. "row" sits at the end of a wide row, "footer"
@@ -41,16 +44,16 @@ export function NodeLiveStats({
   const usage = info
     ? (
         [
-          ["CPU", info.cpuUsage],
-          ["内存", info.memoryUsage],
-          ["磁盘", info.diskUsage],
+          ["CPU", info.cpuUsage, info.cpuCores ? `${info.cpuCores} 核` : ""],
+          ["内存", info.memoryUsage, capacity(info.memUsed, info.memTotal)],
+          ["磁盘", info.diskUsage, capacity(info.diskUsed, info.diskTotal)],
         ] as const
       ).filter(([, v]) => v !== undefined)
     : [];
   const usageLine = usage.length > 0 && (
     <span className="whitespace-nowrap">
-      {usage.map(([label, v], i) => (
-        <span key={label}>
+      {usage.map(([label, v, hint], i) => (
+        <span key={label} title={hint || undefined}>
           {i > 0 && " · "}
           {label}{" "}
           <span

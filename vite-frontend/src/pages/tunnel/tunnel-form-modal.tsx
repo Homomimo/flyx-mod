@@ -953,49 +953,6 @@ export function TunnelFormModal({
                     }
                   >
                     <div className="space-y-4 pb-2">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Select
-                          errorMessage={errors.flow}
-                          isInvalid={!!errors.flow}
-                          label="流量计算"
-                          placeholder="请选择流量计算方式"
-                          selectedKeys={[form.flow.toString()]}
-                          variant="bordered"
-                          onSelectionChange={(keys) => {
-                            const selectedKey = Array.from(keys)[0] as string;
-
-                            if (selectedKey) {
-                              setForm((prev) => ({
-                                ...prev,
-                                flow: parseInt(selectedKey),
-                              }));
-                            }
-                          }}
-                        >
-                          <SelectItem key="1">单向计算（仅上传）</SelectItem>
-                          <SelectItem key="2">双向计算（上传+下载）</SelectItem>
-                        </Select>
-
-                        <Input
-                          errorMessage={errors.trafficRatio}
-                          isInvalid={!!errors.trafficRatio}
-                          label="流量倍率"
-                          max={100}
-                          min={0.01}
-                          placeholder="例如：0.5 或 1 或 2"
-                          step="any"
-                          type="number"
-                          value={form.trafficRatio.toString()}
-                          variant="bordered"
-                          onChange={(e) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              trafficRatio: parseFloat(e.target.value) || 0,
-                            }))
-                          }
-                        />
-                      </div>
-
                       <Textarea
                         description="入口IP由系统自动从入口服务器采集，无需手动填写。支持多个IP，每行一个地址，留空则使用入口服务器IP"
                         errorMessage={errors.inIp}

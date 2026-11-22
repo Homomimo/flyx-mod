@@ -44,17 +44,6 @@ func (r *Repository) ListNodesWithExpiry() ([]model.Node, error) {
 	return nodes, err
 }
 
-// ListUsersForNotify returns the fields the quota and expiry reminders need.
-func (r *Repository) ListUsersForNotify() ([]model.User, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("repository not initialized")
-	}
-	var users []model.User
-	err := r.db.Select("id", "user", "role_id", "status", "exp_time", "flow", "flow_mib", "in_flow", "out_flow").
-		Order("id ASC").Find(&users).Error
-	return users, err
-}
-
 // SumStatisticsFlowSince adds up the hourly forward traffic increments
 // recorded since the given time (unix ms).
 func (r *Repository) SumStatisticsFlowSince(sinceMs int64) (int64, error) {

@@ -57,72 +57,14 @@ class TestAPIAuthentication:
 
     def test_protected_endpoint_without_token(self, api_client: APIClient):
         """Test that protected endpoint rejects requests without token."""
-        response = api_client.post("/user/list")
+        response = api_client.post("/tunnel/list")
         assert response["code"] == 401
 
     def test_protected_endpoint_with_token(self, authenticated_api: APIClient):
         """Test that protected endpoint accepts requests with token."""
-        response = authenticated_api.post("/user/list")
+        response = authenticated_api.post("/tunnel/list")
         assert response["code"] == 0
         assert isinstance(response["data"], list)
-
-
-@pytest.mark.api
-class TestAPIUserManagement:
-    """API user management tests."""
-
-    def test_list_users(self, authenticated_api: APIClient):
-        """Test listing users."""
-        response = authenticated_api.post("/user/list")
-        assert response["code"] == 0
-        users = response["data"]
-        assert isinstance(users, list)
-
-    def test_create_and_delete_user(self, authenticated_api: APIClient):
-        """Test creating and deleting a user."""
-        import uuid
-
-        username = f"test_api_user_{uuid.uuid4().hex[:8]}"
-
-        create_response = authenticated_api.create_user(username, "test123", name="Test User")
-        assert create_response.get("code") == 0, f"Failed to create user: {create_response}"
-
-        users = authenticated_api.list_users(username)
-        user_id = None
-        for u in users:
-            if u.get("user") == username:
-                user_id = u.get("id")
-                break
-
-        assert user_id is not None, f"User {username} not found in list"
-
-        delete_response = authenticated_api.delete_user(user_id)
-        assert delete_response.get("code") == 0
-
-    def test_create_duplicate_user(self, authenticated_api: APIClient):
-        """Test that creating duplicate user fails."""
-        import uuid
-
-        username = f"test_dup_user_{uuid.uuid4().hex[:8]}"
-
-        create1 = authenticated_api.create_user(username, "test123")
-        assert create1.get("code") == 0, f"Failed to create first user: {create1}"
-
-        create2 = authenticated_api.create_user(username, "test456")
-        assert create2.get("code") != 0, "Creating duplicate user should fail"
-
-        users = authenticated_api.list_users(username)
-        for u in users:
-            if u.get("user") == username:
-                authenticated_api.delete_user(u.get("id"))
-                break
-
-    def test_user_package_endpoint(self, authenticated_api: APIClient):
-        """Test user package endpoint."""
-        response = authenticated_api.post("/user/package")
-        assert response["code"] == 0
-        assert "userInfo" in response["data"]
-        assert "tunnelPermissions" in response["data"]
 
 
 @pytest.mark.api

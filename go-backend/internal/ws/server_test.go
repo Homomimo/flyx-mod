@@ -116,43 +116,6 @@ func TestValidateAdminSessionRejectsExpiredToken(t *testing.T) {
 	}
 }
 
-func TestServeHTTPAllowsMonitorTokenWithPermission(t *testing.T) {
-	secret := "unit-test-secret"
-	token, err := auth.GenerateToken(2, "normal_user", 1, secret)
-	if err != nil {
-		t.Fatalf("generate token: %v", err)
-	}
-
-	r, err := repo.Open(t.TempDir() + "/monitor.db")
-	if err != nil {
-		t.Fatalf("open repo: %v", err)
-	}
-	defer r.Close()
-	if err := r.InsertMonitorPermission(2, 123); err != nil {
-		t.Fatalf("insert permission: %v", err)
-	}
-
-	server := NewServer(r, secret)
-	server.SetUserAuthStateLookup(func(userID int64) (*auth.UserAuthState, error) {
-		return &auth.UserAuthState{ID: userID, RoleID: 1, Status: 1, PasswordChangedAt: 0}, nil
-	})
-
-	ts := httptest.NewServer(server)
-	defer ts.Close()
-
-	conn, resp, err := websocket.DefaultDialer.Dial(
-		"ws"+strings.TrimPrefix(ts.URL, "http")+"/system-info?type=0&secret="+url.QueryEscape(token),
-		nil,
-	)
-	if err != nil {
-		if resp != nil {
-			t.Fatalf("dial websocket error = %v, status=%d", err, resp.StatusCode)
-		}
-		t.Fatalf("dial websocket error = %v", err)
-	}
-	_ = conn.Close()
-}
-
 func TestConnWrapSerializesConcurrentWrites(t *testing.T) {
 	serverConn, clientConn := websocketTestPipe(t)
 	defer serverConn.Close()

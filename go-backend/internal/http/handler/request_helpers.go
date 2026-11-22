@@ -154,18 +154,6 @@ func asFloat(v interface{}, def float64) float64 {
 	return f
 }
 
-func asAnyToInt64Ptr(v interface{}) *int64 {
-	s := asString(v)
-	if s == "" || strings.EqualFold(s, "null") {
-		return nil
-	}
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return nil
-	}
-	return &i
-}
-
 func idFromBody(r *http.Request, w http.ResponseWriter) int64 {
 	return asInt64FromBodyKey(r, w, "id")
 }
@@ -226,13 +214,6 @@ func nullableUnixMilli(v int64) interface{} {
 		return nil
 	}
 	return v
-}
-
-func nullableInt(v *int64) interface{} {
-	if v == nil {
-		return nil
-	}
-	return *v
 }
 
 func defaultString(v, def string) string {
