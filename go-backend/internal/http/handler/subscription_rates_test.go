@@ -1,65 +1,76 @@
 package handler
 
 import (
-	"sync/atomic"
+	"go-backend/internal/ws"
 	"testing"
 	"time"
 )
 
-func testRateSample(ms, up, down int64) rateSample {
-	return rateSample{"e", ms, []agentUserCounter{{7, "up", up}, {7, "down", down}}}
-}
-func TestSubscriptionLiveRates(t *testing.T) {
-	base := testRateSample(1000, 400, 2000)
-	downloading := testRateSample(2250, 525, 4560)
-	if got := subscriptionRates(base, downloading)[7]; got != (subRate{100, 2048}) {
-		t.Fatal(got)
-	}
-	idle := testRateSample(3250, 525, 4560)
-	if r, ok := subscriptionRates(downloading, idle)[7]; !ok || r != (subRate{}) {
-		t.Fatal("valid idle", r, ok)
-	}
-	changed := downloading
-	changed.Epoch = "new"
-	missing := downloading
-	missing.Users = missing.Users[:1]
-	for _, s := range []rateSample{base, changed, missing, testRateSample(5000, 1000, 9999), testRateSample(2000, 100, 3000)} {
-		if _, ok := subscriptionRates(base, s)[7]; ok {
-			t.Fatal("invalid sample yielded speed", s)
-		}
-	}
-	if len(subscriptionRates(rateSample{}, base)) != 0 {
-		t.Fatal("first sample is only a baseline")
-	}
-}
 func TestSubscriptionLiveRateSumAndExpiry(t *testing.T) {
 	now := time.Now()
-	hub := subscriptionRateHub{nodes: map[int64]*liveRateNode{1: {updated: now, rates: map[int64]subRate{7: {10, 20}}}, 2: {updated: now, rates: map[int64]subRate{7: {1, 2}}}, 3: {updated: now.Add(-4 * time.Second), rates: map[int64]subRate{8: {1, 2}, 7: {100, 200}}}}}
-	got := hub.snapshot(now)
-	if len(got) != 1 || got[7] != (subRate{11, 22}) {
-		t.Fatal(got)
+	p := &ws.RatePair{Up: 1, Down: 2}
+	hub := subscriptionRateHub{nodes: map[int64]*liveRateNode{1: {updated: now, rates: map[int64]ws.NodeUserRate{7: {Instant: p, Average: p}, 8: {Instant: &ws.RatePair{}}}}, 2: {updated: now, rates: map[int64]ws.NodeUserRate{7: {Instant: p}, 8: {Instant: p}}}, 3: {updated: now.Add(-3 * time.Second), rates: map[int64]ws.NodeUserRate{7: {Instant: p}}}}}
+	m := rateMembership{7: {1, 2, 3}, 8: {1}, 9: {3}, 10: {}}
+	r := hub.snapshot(now, m)
+	if x := r[7]; x.Expected != 3 || x.Valid != 2 || x.AverageValid != 1 || *x.Instant != (ws.RatePair{Up: 2, Down: 4}) || *x.Average != *p {
+		t.Fatal(x)
+	}
+	if x := r[8]; x.Valid != 1 || *x.Instant != (ws.RatePair{}) {
+		t.Fatal(x)
+	}
+	if r[9].Instant != nil || r[9].Expected != 1 || r[10].Expected != 0 {
+		t.Fatal(r)
 	}
 }
 func TestSubscriptionLiveWatch(t *testing.T) {
 	var hub subscriptionRateHub
-	var calls atomic.Int32
-	sample := func(id int64) (rateSample, error) {
-		n := int64(calls.Add(1))
-		return testRateSample(1000*n, 100*n, 1000*n), nil
-	}
-	a := hub.watch([]int64{3}, sample)
-	b := hub.watch([]int64{3}, sample)
+	lease := make(chan string, 5)
+	send := func(_ int64, s string) { lease <- s }
+	m := rateMembership{7: {3}}
+	_, a := hub.watch(m, send)
+	event, b := hub.watch(m, send)
 	a()
 	defer b()
-	until := time.Now().Add(4 * time.Second)
-	for time.Now().Before(until) {
-		if r, ok := hub.snapshot(time.Now())[7]; ok {
-			if r != (subRate{100, 1000}) || calls.Load() != 2 {
-				t.Fatal(r, calls.Load())
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	var token string
+	select {
+	case token = <-lease:
+	case <-time.After(time.Second):
+		t.Fatal("no lease")
 	}
-	t.Fatal("no live rate")
+	p := &ws.RatePair{Down: 8}
+	frame := ws.NodeRateFrame{Token: token, Users: map[int64]ws.NodeUserRate{7: {Instant: p}}}
+	hub.receive(3, &frame)
+	select {
+	case <-event:
+	default:
+		t.Fatal("frame did not wake viewer")
+	}
+	hub.receive(3, &frame)
+	frame.Token = "previous"
+	hub.receive(3, &frame)
+	select {
+	case <-event:
+		t.Fatal("duplicate/old lease accepted")
+	default:
+	}
+	if r := hub.snapshot(time.Now(), m)[7]; r.Valid != 1 || r.Instant.Down != 8 {
+		t.Fatal(r)
+	}
+	select {
+	case <-lease:
+		t.Fatal("viewers didn't share lease")
+	default:
+	}
+	hub.receive(3, nil)
+	if hub.snapshot(time.Now(), m)[7].Instant != nil {
+		t.Fatal("offline node counted")
+	}
+}
+func TestSubscriptionLiveDelayedFrame(t *testing.T) {
+	n := &liveRateNode{token: "x", issued: time.Now().Add(-8 * time.Second)}
+	hub := subscriptionRateHub{nodes: map[int64]*liveRateNode{1: n}}
+	hub.receive(1, &ws.NodeRateFrame{Token: "x", Elapsed: 1500, Users: map[int64]ws.NodeUserRate{}})
+	if !n.updated.IsZero() {
+		t.Fatal("stale queue accepted")
+	}
 }

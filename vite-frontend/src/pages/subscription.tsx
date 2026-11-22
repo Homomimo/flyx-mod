@@ -1776,6 +1776,7 @@ export default function SubscriptionPage() {
                       </Button>
                     </div>
                     <RateLabel
+                      details
                       rate={detail.active ? rates[detail.id] : undefined}
                     />
                     {detail.trafficLimit > 0 && (

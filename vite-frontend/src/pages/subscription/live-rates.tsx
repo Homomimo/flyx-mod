@@ -5,8 +5,17 @@ import { IS_DEMO } from "@/demo";
 import { getToken } from "@/utils/session";
 import { formatTraffic } from "@/utils/traffic";
 
-type Rate = { up: number; down: number };
-type Rates = Record<number, Rate>;
+type Pair = { up: number; down: number };
+type Rate = {
+  instant: Pair | null;
+  average: Pair | null;
+  valid: number;
+  averageValid: number;
+  expected: number;
+};
+// Older panels ignore ?v=2 and return bare pairs. Don't invent coverage.
+type WireRate = Rate | Pair;
+type Rates = Record<number, WireRate>;
 
 export function useSubscriptionRates(enabled: boolean): Rates {
   const [rates, setRates] = useState<Rates>({});
@@ -32,7 +41,7 @@ export function useSubscriptionRates(enabled: boolean): Rates {
           /\/?$/,
           "/",
         );
-        const res = await fetch(`${base}subscription/rates`, {
+        const res = await fetch(`${base}subscription/rates?v=2`, {
           method: "POST",
           headers: { Authorization: getToken() || "" },
           signal: controller.signal,
@@ -107,16 +116,46 @@ export function useSubscriptionRates(enabled: boolean): Rates {
   return enabled ? rates : {};
 }
 
-export function RateLabel({ rate }: { rate?: Rate }) {
+function speed(pair?: Pair | null) {
+  if (!pair || !Number.isFinite(pair.up) || !Number.isFinite(pair.down))
+    return "—";
+
+  const fmt = (value: number) =>
+    value > 0 && value < 1 ? "<1 B" : formatTraffic(value);
+
+  return `↑ ${fmt(pair.up)}/s　↓ ${fmt(pair.down)}/s`;
+}
+function coverage(valid: number, expected: number) {
+  if (!expected) return "无可计量节点";
+
+  return `${valid}/${expected} · ${valid === expected ? "完整" : valid ? "部分" : "暂无样本"}`;
+}
+export function RateLabel({
+  rate,
+  details = false,
+}: {
+  rate?: WireRate;
+  details?: boolean;
+}) {
+  const measured = rate && "instant" in rate ? rate : undefined;
+  const instant = rate && "up" in rate ? rate : measured?.instant;
+
   return (
     <div
       className="text-xs tabular-nums text-default-500"
-      title="约 1 秒采样，仅汇总有有效样本的直连 Agent；外部节点、旧 Agent 或数据不足时不计入。"
+      title="↑ 上传、↓ 下载；仅汇总当前分发订阅有有效样本的直连节点。0 B/s 表示已测得空闲，— 表示无有效样本。"
     >
-      实时速率 ·{" "}
-      {rate
-        ? `↑ ${formatTraffic(rate.up)}/s　↓ ${formatTraffic(rate.down)}/s`
-        : "—"}
+      <div>
+        实时速率 · {speed(instant)}
+        {measured && `　${coverage(measured.valid, measured.expected)}`}
+      </div>
+      {details && (
+        <div>
+          近 3 秒均速 · {speed(measured?.average)}
+          {measured &&
+            `　${coverage(measured.averageValid, measured.expected)}`}
+        </div>
+      )}
     </div>
   );
 }

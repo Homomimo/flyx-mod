@@ -80,6 +80,7 @@ type Server struct {
 	upgrader         websocket.Upgrader
 	onNodeOnline     func(nodeID int64)
 	onNodeMetric     func(nodeID int64, info SystemInfo)
+	onRate           func(int64, *NodeRateFrame)
 	onNodeOffline    func(nodeID int64)
 	getUserAuthState func(userID int64) (*auth.UserAuthState, error)
 
@@ -297,6 +298,9 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, nodeID int64
 	}
 	ns := &nodeSession{nodeID: nodeID, secret: secret, conn: cw, crypto: nodeCrypto}
 	s.nodes[nodeID] = ns
+	if s.onRate != nil {
+		s.onRate(nodeID, nil)
+	}
 	s.byConn[conn] = ns
 	s.mu.Unlock()
 
@@ -322,6 +326,9 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, nodeID int64
 		delete(s.byConn, conn)
 		if needOfflineBroadcast {
 			delete(s.lastMetric, nodeID)
+			if s.onRate != nil {
+				s.onRate(nodeID, nil)
+			}
 		}
 		s.mu.Unlock()
 		if needOfflineBroadcast {
@@ -372,7 +379,10 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request, nodeID int64
 					s.broadcastTyped(nodeID, "metric", string(envelope.Data))
 				}
 				continue
-			case "SubscriptionCountersResponse", "SubscriptionSNIResponse":
+			case "SubscriptionRateFrame":
+				s.privateRateFrame(ns, msg)
+				continue
+			case "SubscriptionRateLeaseResponse", "SubscriptionCountersResponse", "SubscriptionSNIResponse":
 				// Private subscription data is only delivered to the pending request.
 				continue
 			case "UpgradeProgress":

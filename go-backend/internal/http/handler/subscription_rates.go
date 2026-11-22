@@ -4,100 +4,172 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"go-backend/internal/http/response"
+	"go-backend/internal/kernel"
+	"go-backend/internal/ws"
+
+	"github.com/google/uuid"
 )
 
-type rateSample struct {
-	Epoch     string             `json:"epoch"`
-	SampledAt int64              `json:"sampledAt"`
-	Users     []agentUserCounter `json:"users"`
-}
+// Membership is per share subscription, not all the panel's kernel nodes.
+// Read topology once per stream, not in the one-second sample path.
+type rateMembership map[int64][]int64
 
-type subRate struct {
-	Up   float64 `json:"up"`
-	Down float64 `json:"down"`
-}
-type counterKey struct {
-	id  int64
-	dir string
-}
-
-// Rates are observational. An epoch change or a gap starts a new baseline;
-// never interpret a total since boot as a one-second delta.
-func subscriptionRates(prev, cur rateSample) map[int64]subRate {
-	dt := cur.SampledAt - prev.SampledAt
-	if prev.SampledAt <= 0 || prev.Epoch == "" || prev.Epoch != cur.Epoch || dt <= 0 || dt > 3500 {
-		return nil
+func (h *Handler) rateMembership() (rateMembership, error) {
+	subs, err := h.repo.ListSubscriptions()
+	if err != nil {
+		return nil, err
 	}
-	old := make(map[counterKey]int64, len(prev.Users))
-	for _, c := range prev.Users {
-		old[counterKey{c.ID, c.Dir}] = c.Bytes
+	c, err := h.loadSubContext()
+	if err != nil {
+		return nil, err
 	}
-	mask := map[int64]int{}
-	rates := map[int64]subRate{}
-	for _, c := range cur.Users {
-		before, ok := old[counterKey{c.ID, c.Dir}]
-		if !ok || c.ID <= 0 || before < 0 || c.Bytes < before {
+	ks, err := h.repo.ListNodeKernels(0)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := h.repo.ListSubscriptionMeterNodes()
+	if err != nil {
+		return nil, err
+	}
+	local := map[int64]bool{}
+	ssMeter := map[int64]bool{}
+	for _, n := range nodes {
+		local[n.ID] = !nftCannotMark(n.NftError)
+		ssMeter[n.ID] = strings.TrimSpace(n.NftError) == ""
+	}
+	kernels := map[int64]int64{}
+	for _, k := range ks {
+		if k.Enabled == 1 && local[k.NodeID] {
+			kernels[k.ID] = k.NodeID
+		}
+	}
+	inbound := map[int64]int64{}
+	for _, row := range c.rows {
+		if row.SourceID != 0 || row.NodeID <= 0 || row.Enabled != 1 || kernels[row.KernelID] != row.NodeID {
 			continue
 		}
-		speed := float64(c.Bytes-before) * 1000 / float64(dt)
-		r := rates[c.ID]
-		switch c.Dir {
-		case "up":
-			r.Up = speed
-			mask[c.ID] |= 1
-		case "down":
-			r.Down = speed
-			mask[c.ID] |= 2
-		default:
+		in, e := inboundFromModel(row)
+		if e == nil && in.SupportsUsers() && (!in.Settings.SSSubscriptionUsers || ssMeter[row.NodeID]) {
+			inbound[row.ID] = row.NodeID
+		}
+	}
+	groups := map[int64][]int64{}
+	for _, g := range c.groups {
+		seen := map[int64]bool{}
+		for _, i := range c.groupInboundIDs(g) {
+			if n := inbound[i]; n != 0 && !seen[n] {
+				groups[g.ID] = append(groups[g.ID], n)
+				seen[n] = true
+			}
+		}
+	}
+	m := rateMembership{}
+	now := time.Now()
+	for i := range subs {
+		s := &subs[i]
+		if !isShare(s) || !subActive(s, now) || kernel.UserMark(s.ID) == 0 {
 			continue
 		}
-		rates[c.ID] = r
-	}
-	for id := range rates {
-		if mask[id] != 3 {
-			delete(rates, id)
+		seen := map[int64]bool{}
+		m[s.ID] = nil
+		for _, g := range c.subGroups(s) {
+			for _, n := range groups[g.ID] {
+				if !seen[n] {
+					m[s.ID] = append(m[s.ID], n)
+					seen[n] = true
+				}
+			}
 		}
 	}
-	return rates
+	return m, nil
 }
 
 type liveRateNode struct {
-	viewers int
-	cancel  context.CancelFunc
-	updated time.Time
-	rates   map[int64]subRate
+	viewers         int
+	cancel          context.CancelFunc
+	renew           chan struct{}
+	token           string
+	issued, updated time.Time
+	elapsed         int64
+	rates           map[int64]ws.NodeUserRate
 }
 type subscriptionRateHub struct {
-	mu    sync.Mutex
-	nodes map[int64]*liveRateNode
+	mu        sync.Mutex
+	nodes     map[int64]*liveRateNode
+	listeners map[chan struct{}]bool
 }
 
-// Concurrent viewers share the same read. Each worker waits for its previous
-// reply before sending another command; slow nodes do not block healthy ones.
-func (hub *subscriptionRateHub) watch(ids []int64, sample func(int64) (rateSample, error)) func() {
+func signalRate(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+func (hub *subscriptionRateHub) receive(id int64, f *ws.NodeRateFrame) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	n := hub.nodes[id]
+	if n == nil {
+		return
+	}
+	if f == nil {
+		n.token = ""
+		n.rates = nil
+		signalRate(n.renew)
+	} else {
+		// Panel send time + agent monotonic elapsed is a conservative estimate
+		// of sample time; delayed frames cannot appear fresh after a backlog.
+		if n.token != f.Token || f.Elapsed <= n.elapsed {
+			return
+		}
+		sample := n.issued.Add(time.Duration(f.Elapsed) * time.Millisecond)
+		age := time.Since(sample)
+		if age < 0 || age >= 3*time.Second {
+			return
+		}
+		n.updated = sample
+		n.elapsed = f.Elapsed
+		n.rates = f.Users
+	}
+	for ch := range hub.listeners {
+		signalRate(ch)
+	}
+}
+func (hub *subscriptionRateHub) watch(m rateMembership, lease func(int64, string)) (<-chan struct{}, func()) {
+	ids := map[int64]bool{}
+	for _, ns := range m {
+		for _, id := range ns {
+			ids[id] = true
+		}
+	}
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	if hub.nodes == nil {
 		hub.nodes = map[int64]*liveRateNode{}
+		hub.listeners = map[chan struct{}]bool{}
 	}
-	for _, id := range ids {
+	ch := make(chan struct{}, 1)
+	hub.listeners[ch] = true
+	for id := range ids {
 		n := hub.nodes[id]
 		if n == nil {
 			ctx, cancel := context.WithCancel(context.Background())
-			n = &liveRateNode{cancel: cancel}
+			n = &liveRateNode{cancel: cancel, renew: make(chan struct{}, 1)}
 			hub.nodes[id] = n
-			go hub.run(ctx, id, n, sample)
+			go hub.run(ctx, id, n, lease)
 		}
 		n.viewers++
 	}
-	return func() {
+	return ch, func() {
 		hub.mu.Lock()
 		defer hub.mu.Unlock()
-		for _, id := range ids {
+		delete(hub.listeners, ch)
+		for id := range ids {
 			n := hub.nodes[id]
 			n.viewers--
 			if n.viewers == 0 {
@@ -107,67 +179,85 @@ func (hub *subscriptionRateHub) watch(ids []int64, sample func(int64) (rateSampl
 		}
 	}
 }
-func (hub *subscriptionRateHub) run(ctx context.Context, id int64, n *liveRateNode, sample func(int64) (rateSample, error)) {
-	var prev rateSample
+func (hub *subscriptionRateHub) run(ctx context.Context, id int64, n *liveRateNode, lease func(int64, string)) {
+	t := time.NewTicker(8 * time.Second)
+	defer t.Stop()
 	for ctx.Err() == nil {
-		start := time.Now()
-		cur, err := sample(id)
-		period := time.Second
-		if err != nil {
-			cur = rateSample{}
-			period = 5 * time.Second
-		}
-		rates := subscriptionRates(prev, cur)
-		prev = cur
+		token := uuid.NewString()
 		hub.mu.Lock()
-		n.rates = rates
-		n.updated = time.Now()
+		n.token = token
+		n.issued = time.Now()
+		n.elapsed = -1
 		hub.mu.Unlock()
-		timer := time.NewTimer(max(50*time.Millisecond, period-time.Since(start)))
+		lease(id, token)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-n.renew:
+		case <-t.C:
 		}
 	}
 }
-func (hub *subscriptionRateHub) snapshot(now time.Time) map[int64]subRate {
+
+type coveredRate struct {
+	Instant      *ws.RatePair `json:"instant"`
+	Average      *ws.RatePair `json:"average"`
+	Expected     int          `json:"expected"`
+	Valid        int          `json:"valid"`
+	AverageValid int          `json:"averageValid"`
+}
+
+func addRate(to **ws.RatePair, p *ws.RatePair) {
+	if *to == nil {
+		*to = &ws.RatePair{}
+	}
+	(*to).Down += p.Down
+	(*to).Up += p.Up
+}
+func (hub *subscriptionRateHub) snapshot(now time.Time, m rateMembership) map[int64]coveredRate {
+	// Frame maps are immutable after delivery. Do not hold the ingestion
+	// lock while aggregating a large viewer-specific membership.
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
-	sum := map[int64]subRate{}
-	for _, n := range hub.nodes {
-		if now.Sub(n.updated) > 3*time.Second {
-			continue
+	fresh := make(map[int64]map[int64]ws.NodeUserRate, len(hub.nodes))
+	for id, n := range hub.nodes {
+		if now.Sub(n.updated) < 3*time.Second {
+			fresh[id] = n.rates
 		}
-		for id, r := range n.rates {
-			total := sum[id]
-			total.Up += r.Up
-			total.Down += r.Down
-			sum[id] = total
+	}
+	hub.mu.Unlock()
+	sum := make(map[int64]coveredRate, len(m))
+	for id, nodes := range m {
+		r := coveredRate{Expected: len(nodes)}
+		for _, node := range nodes {
+			s := fresh[node][id]
+			if s.Instant == nil {
+				continue
+			}
+			addRate(&r.Instant, s.Instant)
+			r.Valid++
+			if s.Average != nil {
+				addRate(&r.Average, s.Average)
+				r.AverageValid++
+			}
 		}
+		sum[id] = r
 	}
 	return sum
 }
 
-// JWT middleware restricts this stream to the same administrator as /subscription/list.
+// Existing administrator-only route; v1 clients get only valid instant pairs.
 func (h *Handler) subscriptionRateStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	ids, err := h.repo.ListKernelNodeIDs()
+	m, err := h.rateMembership()
 	if err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
-	release := h.subRates.watch(ids, func(id int64) (rateSample, error) {
-		var s rateSample
-		res, err := h.wsServer.SendCommand(id, "SubscriptionCounters", nil, 1500*time.Millisecond)
-		if err == nil {
-			err = remarshal(res.Data, &s)
-		}
-		return s, err
+	events, release := h.subRates.watch(m, func(id int64, token string) {
+		_, _ = h.wsServer.SendCommand(id, "SubscriptionRateLease", token, 2*time.Second)
 	})
 	defer release()
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -175,16 +265,23 @@ func (h *Handler) subscriptionRateStream(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("X-Accel-Buffering", "no")
 	enc := json.NewEncoder(w)
 	rc := http.NewResponseController(w)
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	// Reauthenticate and refresh node membership on reconnect, below WriteTimeout.
+	heartbeat := time.NewTicker(time.Second)
+	defer heartbeat.Stop()
 	end := time.NewTimer(90 * time.Second)
 	defer end.Stop()
 	for {
-		if err := enc.Encode(h.subRates.snapshot(time.Now())); err != nil {
-			return
+		snap := h.subRates.snapshot(time.Now(), m)
+		var wire any = snap
+		if r.URL.Query().Get("v") != "2" {
+			legacy := map[int64]*ws.RatePair{}
+			for id, row := range snap {
+				if row.Instant != nil {
+					legacy[id] = row.Instant
+				}
+			}
+			wire = legacy
 		}
-		if err := rc.Flush(); err != nil {
+		if enc.Encode(wire) != nil || rc.Flush() != nil {
 			return
 		}
 		select {
@@ -192,7 +289,18 @@ func (h *Handler) subscriptionRateStream(w http.ResponseWriter, r *http.Request)
 			return
 		case <-end.C:
 			return
-		case <-tick.C:
+		case <-heartbeat.C:
+		case <-events:
+			// Coalesce concurrent node arrivals without waiting another one-second tick.
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+			select {
+			case <-events:
+			default:
+			}
 		}
 	}
 }

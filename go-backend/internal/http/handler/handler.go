@@ -159,6 +159,7 @@ func New(repo *repo.Repository, jwtSecret string) *Handler {
 	}
 	h.healthCheck = health.NewChecker(repo, h.wsServer)
 	h.qualityProber = newTunnelQualityProber(h)
+	h.wsServer.SetSubscriptionRateHook(h.subRates.receive)
 	h.wsServer.SetNodeOnlineHook(h.onNodeOnline)
 	h.wsServer.SetNodeOfflineHook(h.notifyNodeOffline)
 	h.wsServer.SetNodeMetricHook(func(nodeID int64, info ws.SystemInfo) {

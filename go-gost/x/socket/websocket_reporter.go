@@ -26,6 +26,7 @@ import (
 	"github.com/go-gost/x/config"
 	"github.com/go-gost/x/identity"
 	"github.com/go-gost/x/internal/util/crypto"
+	"github.com/go-gost/x/kernel"
 	"github.com/go-gost/x/service"
 	"github.com/gorilla/websocket"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -728,6 +729,45 @@ func (w *WebSocketReporter) receiveMessages() {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(w.ctx)
+	leases := make(chan rateLease, 1)
+	frames := make(chan rateFrame, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		runRateSampler(ctx, leases, frames, func() (kernel.SubscriptionSnapshot, error) { return kernel.Default().SubscriptionCounters() })
+	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case f := <-frames:
+				w.sendRateFrame(conn, f)
+			}
+		}
+	}()
+	defer func() { cancel(); wg.Wait() }()
+	dispatch := func(cmd CommandMessage) {
+		if cmd.Type != "SubscriptionRateLease" {
+			w.dispatchCommand(cmd)
+			return
+		}
+		token, ok := cmd.Data.(string)
+		if !ok || len(token) != 36 {
+			w.sendCommandFailure(cmd, "invalid rate lease")
+			return
+		}
+		select {
+		case <-leases:
+		default:
+		}
+		leases <- rateLease{token, time.Now()}
+		w.sendResponse(CommandResponse{Type: "SubscriptionRateLeaseResponse", Success: true, RequestId: cmd.RequestId})
+	}
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -739,19 +779,24 @@ func (w *WebSocketReporter) receiveMessages() {
 					fmt.Printf("❌ WebSocket读取消息错误: %v\n", err)
 				}
 				w.connMutex.Lock()
-				w.connected = false
+				if w.conn == conn {
+					w.connected = false
+				}
 				w.connMutex.Unlock()
 				return
 			}
 
 			// 处理接收到的消息
-			w.handleReceivedMessage(messageType, message)
+			w.decodeReceivedMessage(messageType, message, dispatch)
 		}
 	}
 }
 
 // handleReceivedMessage 处理接收到的消息
 func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byte) {
+	w.decodeReceivedMessage(messageType, message, w.dispatchCommand)
+}
+func (w *WebSocketReporter) decodeReceivedMessage(messageType int, message []byte, dispatch func(CommandMessage)) {
 	switch messageType {
 	case websocket.TextMessage:
 		// 先检查是否是加密消息
@@ -822,7 +867,7 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 			}
 
 			if cmdMsg.Type != "call" {
-				w.dispatchCommand(cmdMsg)
+				dispatch(cmdMsg)
 			}
 		} else {
 			// 处理普通消息
@@ -833,7 +878,7 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 				return
 			}
 			if cmdMsg.Type != "call" {
-				w.dispatchCommand(cmdMsg)
+				dispatch(cmdMsg)
 			}
 		}
 

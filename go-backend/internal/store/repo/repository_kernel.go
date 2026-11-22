@@ -578,3 +578,11 @@ func (r *Repository) SetNodeNftError(nodeID int64, msg string) (bool, error) {
 		Update("nft_error", msg)
 	return res.RowsAffected > 0, res.Error
 }
+
+// ListSubscriptionMeterNodes includes disconnected local nodes: they belong
+// in coverage even when they currently cannot return a sample.
+func (r *Repository) ListSubscriptionMeterNodes() ([]model.Node, error) {
+	var nodes []model.Node
+	err := r.db.Select("id", "nft_error").Where("is_remote = ?", 0).Find(&nodes).Error
+	return nodes, err
+}
