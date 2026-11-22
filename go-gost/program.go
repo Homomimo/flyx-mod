@@ -107,6 +107,7 @@ func (p *program) Start() (err error) {
 	if p.startReporter != nil {
 		p.reporter = p.startReporter()
 	}
+	kernel.Default().StartSubscriptionSNI(ctx)
 	go kernel.Default().Restore()
 
 	go func() {

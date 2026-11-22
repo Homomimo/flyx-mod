@@ -6,12 +6,20 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-gost/x/identity"
 )
 
-const sniDB = "/var/lib/flyx-sni/stats.sqlite3"
+func sniDirectory() string {
+	if identity.Env("FLYX_AGENT_CONTAINER", "FLUX_AGENT_CONTAINER") == "1" {
+		return filepath.Join(identity.DataDir(), "sni")
+	}
+	return "/var/lib/flyx-sni"
+}
 
 type SNIQuery struct {
 	ID    int64 `json:"id"`
@@ -30,7 +38,7 @@ type SNIResult struct {
 
 // Query the optional observer's aggregate store; never open a capture or alter routing on panel request.
 func QuerySNI(q SNIQuery) (SNIResult, error) {
-	return querySNI(q, sniDB, time.Now().UnixMilli())
+	return querySNI(q, filepath.Join(sniDirectory(), "stats.sqlite3"), time.Now().UnixMilli())
 }
 
 func querySNI(q SNIQuery, db string, now int64) (SNIResult, error) {
@@ -49,7 +57,7 @@ func querySNI(q SNIQuery, db string, now int64) (SNIResult, error) {
 	id := strconv.FormatInt(q.ID, 10)
 	start := strconv.FormatInt(max(q.Start/1000, now/1000-30*86400), 10)
 	end := strconv.FormatInt(q.End/1000, 10)
-	sql := `SELECT COALESCE((SELECT seen FROM health WHERE sub=` + id + `),0); SELECT json_group_array(json_object('domain',host,'hits',total)) FROM (SELECT host,sum(n) total FROM hits WHERE sub=` + id + ` AND t>=` + start + ` AND t<` + end + ` GROUP BY host ORDER BY total DESC, host LIMIT 101);`
+	sql := `SELECT COALESCE((SELECT CASE WHEN seen=-1 THEN (SELECT seen FROM health WHERE sub=0) ELSE seen END FROM health WHERE sub=` + id + `),0); SELECT json_group_array(json_object('domain',host,'hits',total)) FROM (SELECT host,sum(n) total FROM hits WHERE sub=` + id + ` AND t>=` + start + ` AND t<` + end + ` GROUP BY host ORDER BY total DESC, host LIMIT 101);`
 	buf, err := exec.CommandContext(ctx, "sqlite3", "-readonly", "-batch", "-noheader", db, sql).Output()
 	if err != nil {
 		return out, err

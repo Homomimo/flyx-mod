@@ -58,6 +58,7 @@ ensure_download_url_initialized() {
   DOWNLOAD_URL="file://$TEST_DIR/agent"
 }
 check_and_install_tcpkill() { :; }
+ensure_sni_dependencies() { :; }
 main
 EOF
 chmod +x "$TEST_DIR/install.sh"

@@ -108,6 +108,7 @@ EOF
 
 
   check_and_install_tcpkill() { :; }
+  ensure_sni_dependencies() { :; }
 
   systemctl() {
     return 0
@@ -178,6 +179,7 @@ EOF
   ensure_download_url_initialized() { :; }
   get_config_params() { :; }
   check_and_install_tcpkill() { :; }
+  ensure_sni_dependencies() { :; }
   systemctl() { return 0; }
   curl() { return 0; }
 
@@ -211,6 +213,7 @@ EOF
     DOWNLOAD_URL="https://example.com/gost"
   }
   check_and_install_tcpkill() { :; }
+  ensure_sni_dependencies() { :; }
   systemctl() { return 0; }
   curl() { return 0; }
 
@@ -235,6 +238,7 @@ test_install_agent_writes_json_safe_config() (
   ensure_download_url_initialized() { :; }
   get_config_params() { :; }
   check_and_install_tcpkill() { :; }
+  ensure_sni_dependencies() { :; }
   systemctl() { return 0; }
   curl() {
     local output=""
@@ -296,6 +300,7 @@ test_install_agent_uses_openrc() (
   ensure_download_url_initialized() { :; }
   get_config_params() { :; }
   check_and_install_tcpkill() { :; }
+  ensure_sni_dependencies() { :; }
   curl() {
     local output=""
     while [[ $# -gt 0 ]]; do

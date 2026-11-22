@@ -274,6 +274,26 @@ delete_self() {
   rm -f "$SCRIPT_PATH" && echo "✅ 脚本文件已删除" || echo "❌ 删除脚本文件失败"
 }
 
+# SNI observation is automatic for eligible subscriptions. Failure to provision
+# optional observation tools must not prevent the forwarding agent from running.
+ensure_sni_dependencies() {
+  [[ $(uname -s) == Linux ]] || return 0
+  if command -v nft >/dev/null && command -v sqlite3 >/dev/null && python3 -I -c 'import ctypes,sqlite3,ssl; ctypes.CDLL("libnetfilter_log.so.1")' 2>/dev/null; then return 0; fi
+  local -a runner=() packages=()
+  if (( EUID != 0 )); then
+    if command -v sudo >/dev/null; then runner=(sudo); elif command -v doas >/dev/null; then runner=(doas); else echo '⚠ 无法安装 SNI 依赖：需要 root 权限' >&2; return 0; fi
+  fi
+  if command -v apt-get >/dev/null; then
+    packages=(apt-get install -y --no-install-recommends python3 nftables sqlite3 libnetfilter-log1)
+    "${runner[@]}" apt-get update -qq || :
+  elif command -v apk >/dev/null; then packages=(apk add --no-cache python3 nftables sqlite libnetfilter_log)
+  elif command -v dnf >/dev/null; then packages=(dnf install -y python3 nftables sqlite libnetfilter_log)
+  elif command -v yum >/dev/null; then packages=(yum install -y python3 nftables sqlite libnetfilter_log)
+  elif command -v pacman >/dev/null; then packages=(pacman -S --needed --noconfirm python nftables sqlite libnetfilter_log)
+  else echo '⚠ 请检查 SNI 依赖：python3、nftables、sqlite3 和 libnetfilter_log' >&2; return 0; fi
+  "${runner[@]}" "${packages[@]}" || echo '⚠ SNI 依赖安装失败，Agent 转发仍可使用' >&2
+}
+
 # 检查并安装 tcpkill
 check_and_install_tcpkill() {
   # 检查 tcpkill 是否已安装
@@ -600,6 +620,7 @@ install_agent() {
 
   # 检查并安装 tcpkill
   check_and_install_tcpkill
+  ensure_sni_dependencies
   ensure_service_manager || exit 1
 
   mkdir -p "$INSTALL_DIR"
@@ -685,6 +706,7 @@ update_agent() {
   
   # 检查并安装 tcpkill
   check_and_install_tcpkill
+  ensure_sni_dependencies
   ensure_service_manager || return 1
   
   # 先下载新版本

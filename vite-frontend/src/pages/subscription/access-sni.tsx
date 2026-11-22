@@ -63,7 +63,7 @@ export function AccessSNI({
   return (
     <div className="space-y-2 text-xs">
       <p className="text-default-500">
-        采集中 {data.ready} · 已停止 {data.stopped} · 未启用 {data.disabled} ·
+        采集中 {data.ready} · 已停止 {data.stopped} · 未就绪 {data.disabled} ·
         节点不可用或版本过旧 {data.unavailable}
       </p>
       {data.items.length ? (
@@ -88,7 +88,7 @@ export function AccessSNI({
           {data.ready + data.stopped
             ? "此时段没有可显示的 SNI 记录。"
             : data.disabled
-              ? "节点尚未为此订阅启用 SNI 采集。"
+              ? "采集器尚未就绪：请检查节点版本、订阅出站标记、运行依赖和 nftables 权限。"
               : data.unavailable
                 ? "无法读取节点统计。"
                 : "没有可统计的自建节点。"}
@@ -96,8 +96,7 @@ export function AccessSNI({
       )}
       {data.limited && <p>仅展示部分域名及其可汇总次数。</p>}
       <p className="text-default-400">
-        按所选时段合并可见的 TLS
-        握手，不是网页浏览次数。只统计已启用且可读取的自建节点。
+        Agent 自动采集，按所选时段统计可见的 TLS 握手，不是网页浏览次数。仅包含可读取的自建节点。
       </p>
     </div>
   );

@@ -2,6 +2,9 @@ import sqlite3
 import ssl
 import time
 import unittest
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[2] / "go-gost/x/kernel/sniworker"))
 from collector import parse, Store
 
 
@@ -15,6 +18,11 @@ def hello(name):
     return bytes(ip+tcp)+out.read()
 
 class CollectorTest(unittest.TestCase):
+    def test_reconcile_health(self):
+        db=sqlite3.connect(':memory:'); Store(db,[7,8]).activate()
+        db.execute('UPDATE health SET seen=123 WHERE sub=0'); Store(db,[8,12]).activate()
+        self.assertEqual(db.execute('select sub,seen from health where sub>0 order by sub').fetchall(),[(7,123),(8,-1),(12,-1)])
+        db.close()
     def test_visible_client_hello_only(self):
         raw=hello('docs.example.test');self.assertEqual(parse(raw)[0],'docs.example.test');self.assertIsNone(parse(raw[:64]));self.assertIsNone(parse(hello(None)))
     def test_scope_minute_and_retransmission(self):

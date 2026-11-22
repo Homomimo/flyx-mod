@@ -6,7 +6,7 @@ FROM debian:trixie-slim
 # nftables: traffic counters and inbound whitelists; dsniff: tcpkill.
 # bookworm's nftables 1.0.6 crashed on newer host kernels; trixie ships 1.1.x.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates tzdata nftables dsniff tini bash iperf3 iproute2 sqlite3 coreutils procps gawk \
+  && apt-get install -y --no-install-recommends ca-certificates tzdata nftables dsniff tini bash iperf3 iproute2 python3 libnetfilter-log1 sqlite3 coreutils procps gawk \
   && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETARCH

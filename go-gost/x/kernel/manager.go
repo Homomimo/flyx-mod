@@ -32,6 +32,7 @@ type instance struct {
 type Manager struct {
 	baseDir string
 
+	sni         managedSNI
 	applyMu     sync.Mutex
 	mu          sync.Mutex
 	restoreOnce sync.Once
@@ -566,6 +567,7 @@ func (m *Manager) Uninstall() error {
 }
 
 func (m *Manager) Shutdown() {
+	m.sni.stop()
 	m.mu.Lock()
 	insts := make([]*instance, 0, len(m.instances))
 	for _, inst := range m.instances {
