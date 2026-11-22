@@ -711,15 +711,26 @@ func constantTimeEqual(a, b string) bool {
 	return v == 0
 }
 
-// Only advertise hybrid REALITY to Mihomo for a confirmed Xray release
-// meeting the panel's compatibility floor. Do not infer support from a tag,
-// a version banner, or a partially specified version.
+// The agent stores the first line of `xray version`, not just a release tag.
+// Read the product version, never a Go version or commit from the banner.
 func kernelSupportsPostQuantumReality(k *model.NodeKernel) bool {
 	if k == nil || k.KernelType != kernel.TypeXray {
 		return false
 	}
+	version := strings.TrimSpace(k.InstalledVersion)
+	if version == "latest" {
+		// Explicit installed-channel marker (not the requested k.Version).
+		return true
+	}
+	fields := strings.Fields(version)
+	switch {
+	case len(fields) >= 2 && strings.EqualFold(fields[0], "Xray"):
+		version = fields[1]
+	case len(fields) != 1:
+		return false
+	}
 	var release [3]uint64
-	parts := strings.Split(strings.TrimSpace(k.InstalledVersion), ".")
+	parts := strings.Split(strings.TrimPrefix(version, "v"), ".")
 	if len(parts) != len(release) {
 		return false
 	}
