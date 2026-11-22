@@ -12,7 +12,7 @@ func TestKernelSupportsPostQuantumReality(t *testing.T) {
 		want                  bool
 	}{
 		{"xray", "", false},
-		{"xray", "latest", false},
+		{"xray", "latest", true},
 		{"xray", "99999999999999999999999.7.11", false},
 		{"xray", "26.7.10", false},
 		{"xray", "26.7.11", true},
