@@ -8,6 +8,7 @@ import type {
   SubTemplateSlot,
   SubPreviewItem,
   SubRuleGroup,
+  SubscriptionBatchAction,
   SubscriptionDraft,
   SubscriptionItem,
 } from "@/api";
@@ -19,9 +20,12 @@ import {
   ArrowDown,
   ArrowUp,
   Copy,
+  CopyPlus,
   GripVertical,
   LayoutTemplate,
   QrCode,
+  Search,
+  Tag,
   X,
 } from "lucide-react";
 import {
@@ -45,6 +49,7 @@ import { RateLabel, useSubscriptionRates } from "./subscription/live-rates";
 
 import { useVisiblePolling } from "@/hooks/use-visible-polling";
 import {
+  batchSubscriptions,
   deleteSubscription,
   getInboundList,
   getNodeGroups,
@@ -67,6 +72,7 @@ import {
   ToolbarButton,
 } from "@/components/page-kit";
 import { PageLoadingState } from "@/components/page-state";
+import { useI18n } from "@/i18n";
 import {
   markPageCached,
   pageCached,
@@ -75,7 +81,6 @@ import {
 import { QrImage, copyText, panelOrigin } from "@/pages/inbound/share";
 import { Button } from "@/shadcn-bridge/heroui/button";
 import { Checkbox } from "@/shadcn-bridge/heroui/checkbox";
-import { Chip } from "@/shadcn-bridge/heroui/chip";
 import { Input } from "@/shadcn-bridge/heroui/input";
 import { SubTrafficStats } from "@/components/lazy-charts";
 import {
@@ -85,7 +90,6 @@ import {
   ModalFooter,
   ModalHeader,
 } from "@/shadcn-bridge/heroui/modal";
-import { Switch } from "@/shadcn-bridge/heroui/switch";
 import { formatTraffic } from "@/utils/traffic";
 import { SubClientGrid } from "@/pages/subscription/client-grid";
 import {
@@ -104,9 +108,25 @@ import {
 import {
   NodeGroupEditor,
   NodeGroupList,
+  groupCloneDraftFrom,
   groupDraftFrom,
   groupSourceText,
 } from "@/pages/subscription/node-groups";
+import {
+  SubBatchBar,
+  SubFilterBar,
+  SubGroupSection,
+  SubRowItem,
+  SubSummaryStrip,
+  SubUsageBar,
+  TagEditorInput,
+  isExpiringSoon,
+  isSubIssue,
+  usagePercent,
+  type SubSortBy,
+  type SubStatusFilter,
+  type SubViewMode,
+} from "@/pages/subscription/sub-list-kit";
 
 const modalBase = "!w-[calc(100%-32px)] !mx-auto sm:!w-full overflow-hidden";
 
@@ -163,23 +183,6 @@ function expiryLabel(ms: number): string {
   if (days <= 0) return `${toDateInput(ms)} 已过期`;
 
   return `${toDateInput(ms)} 到期 · 剩 ${days} 天`;
-}
-
-/** How much of its traffic limit a subscription has used. */
-function UsageBar({ s, track }: { s: SubscriptionItem; track: string }) {
-  const used = s.uploadBytes + s.downloadBytes;
-  const pct = s.trafficLimit ? Math.min(100, (used / s.trafficLimit) * 100) : 0;
-  const tone =
-    pct >= 100 ? "bg-danger" : pct >= 90 ? "bg-warning" : "bg-foreground";
-
-  return (
-    <div className={`h-[3px] overflow-hidden rounded-full ${track}`}>
-      <div
-        className={`h-full rounded-full ${tone}`}
-        style={{ width: `${Math.max(2, pct)}%` }}
-      />
-    </div>
-  );
 }
 
 function SubscriptionPreviewRow({
@@ -287,6 +290,8 @@ function draftFrom(
       expire: "",
       enabled: true,
       remark: "",
+      pinned: false,
+      tags: [],
       trafficLimit: 0,
       limitGB: "",
       resetDay: 0,
@@ -303,9 +308,33 @@ function draftFrom(
     expire: toDateInput(s.expireTime),
     enabled: s.enabled,
     remark: s.remark,
+    pinned: Boolean(s.pinned),
+    tags: s.tags ?? [],
     trafficLimit: s.trafficLimit,
     limitGB: gbText(s.trafficLimit),
     resetDay: s.resetDay,
+  };
+}
+
+function draftForGroup(
+  groupId: number,
+  sources: RemoteSourceItem[] = [],
+): Draft {
+  return {
+    ...draftFrom(undefined, sources),
+    groupIds: [groupId],
+  };
+}
+
+function cloneDraftFrom(s: SubscriptionItem): Draft {
+  const base = draftFrom(s);
+
+  return {
+    ...base,
+    id: undefined,
+    name: `${s.name} (副本)`,
+    pinned: false,
+    enabled: true,
   };
 }
 
@@ -330,6 +359,7 @@ function Editor({
   sources,
   ruleGroups,
   templates,
+  tagSuggestions,
   saving,
   onSave,
   onClose,
@@ -340,6 +370,7 @@ function Editor({
   sources: RemoteSourceItem[];
   ruleGroups: SubRuleGroup[];
   templates: SubTemplate[];
+  tagSuggestions: string[];
   saving: boolean;
   onSave: () => void;
   onClose: () => void;
@@ -351,6 +382,7 @@ function Editor({
   const [chainNodes, setChainNodes] = useState<SubPreviewItem[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [page, setPage] = useState<EditorPage>("basic");
+  const [groupSearch, setGroupSearch] = useState("");
   const previewSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, {
@@ -535,7 +567,7 @@ function Editor({
       </ModalHeader>
       {/* A steady height, so switching pages doesn't resize the dialog. */}
       <ModalBody className="min-h-[min(65vh,34rem)] space-y-4">
-        <div className="sticky top-0 z-10">
+        <div className="sticky top-0 z-10 -mx-1 bg-background px-1 pb-2 pt-0.5">
           <EditorTabs
             tabs={[
               { key: "basic", label: "基本" },
@@ -654,6 +686,21 @@ function Editor({
               variant="bordered"
               onChange={(e) => set({ remark: e.target.value })}
             />
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-foreground">分类标签</p>
+              <TagEditorInput
+                suggestions={tagSuggestions}
+                value={draft.tags ?? []}
+                onChange={(tags) => set({ tags })}
+              />
+            </div>
+            <ToggleRow
+              hint="置顶后在订阅列表最上方优先展示，适合自用或常用订阅"
+              id="sub-pinned"
+              label="置顶此订阅"
+              value={Boolean(draft.pinned)}
+              onChange={(pinned) => set({ pinned })}
+            />
             <ToggleRow
               hint="在节点列表最前面加两个占位节点，名字显示到期日期和剩余流量，给不显示订阅信息的客户端看；它们连不上，不要选。停用、到期或流量用完后，订阅只返回一个写明原因的占位节点（不受这个开关影响）"
               id="sub-info-nodes"
@@ -726,30 +773,73 @@ function Editor({
                   还没有节点组，先在订阅页上方切到「节点组」新建一个
                 </p>
               ) : (
-                groups.some((g) => !draft.groupIds.includes(g.id)) && (
-                  <div className="space-y-1">
-                    <p className="text-xs text-default-500">
-                      {pickedGroups.length ? "再加入" : "选择节点组"}
-                    </p>
-                    {groups
-                      .filter((g) => !draft.groupIds.includes(g.id))
-                      .map((g) => (
-                        <Checkbox
-                          key={g.id}
-                          className="w-full"
-                          isSelected={false}
-                          onValueChange={() =>
-                            setGroupIds([...draft.groupIds, g.id])
-                          }
-                        >
-                          <span className="text-sm">{g.name}</span>
-                          <span className="ml-1 text-xs text-default-400">
-                            {g.nodeCount} 个节点 · {groupSourceText(g)}
-                          </span>
-                        </Checkbox>
-                      ))}
-                  </div>
-                )
+                (() => {
+                  const unselected = groups.filter(
+                    (g) => !draft.groupIds.includes(g.id),
+                  );
+
+                  if (unselected.length === 0) return null;
+                  const gq = groupSearch.trim().toLowerCase();
+                  const visible = gq
+                    ? unselected.filter((g) =>
+                        g.name.toLowerCase().includes(gq),
+                      )
+                    : unselected;
+
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-default-500">
+                          {pickedGroups.length ? "再加入" : "选择节点组"}
+                        </p>
+                        {unselected.length > 4 && (
+                          <label className="flex h-7 w-44 items-center gap-1.5 rounded-md border border-divider bg-background px-2 text-xs focus-within:border-ring">
+                            <Search className="h-3.5 w-3.5 shrink-0 text-default-400" />
+                            <input
+                              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-default-400"
+                              placeholder="搜索节点组"
+                              type="text"
+                              value={groupSearch}
+                              onChange={(e) => setGroupSearch(e.target.value)}
+                            />
+                            {groupSearch && (
+                              <button
+                                className="text-default-400 hover:text-foreground"
+                                type="button"
+                                onClick={() => setGroupSearch("")}
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </label>
+                        )}
+                      </div>
+                      <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+                        {visible.length === 0 ? (
+                          <p className="py-2 text-xs text-default-400">
+                            没有匹配的节点组
+                          </p>
+                        ) : (
+                          visible.map((g) => (
+                            <Checkbox
+                              key={g.id}
+                              className="w-full"
+                              isSelected={false}
+                              onValueChange={() =>
+                                setGroupIds([...draft.groupIds, g.id])
+                              }
+                            >
+                              <span className="text-sm">{g.name}</span>
+                              <span className="ml-1 text-xs text-default-400">
+                                {g.nodeCount} 个节点 · {groupSourceText(g)}
+                              </span>
+                            </Checkbox>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()
               )}
               {pickedGroups.length > 1 && (
                 <p className="text-xs text-default-500">
@@ -1259,7 +1349,29 @@ function Editor({
 
 const PAGE = "subscription";
 
+const VIEW_KEY = "flyx_sub_view";
+const COLLAPSED_KEY = "flyx_sub_collapsed";
+
+function readViewMode(): SubViewMode {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "flat" ? "flat" : "grouped";
+  } catch {
+    return "grouped";
+  }
+}
+
+function readCollapsed(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function SubscriptionPage() {
+  const { t: tr } = useI18n();
   // A revisit shows the last data at once and reloads in the background.
   const [loading, setLoading] = useState(() => !pageCached(PAGE));
   const [subs, setSubs] = useCachedState<SubscriptionItem[]>(PAGE, "subs", []);
@@ -1287,6 +1399,19 @@ export default function SubscriptionPage() {
   const [groupDraft, setGroupDraft] = useState<NodeGroupDraft | null>(null);
   const [tab, setTab] = useState<"subs" | "groups">("subs");
   const [query, setQuery] = useState("");
+  const [viewMode, setViewModeState] = useState<SubViewMode>(readViewMode);
+  const [collapsed, setCollapsedState] =
+    useState<Record<string, boolean>>(readCollapsed);
+  const [statusFilter, setStatusFilter] = useState<SubStatusFilter>("all");
+  const [groupFilter, setGroupFilter] = useState<number>(0);
+  const [tagFilter, setTagFilter] = useState<string>("");
+  const [sortBy, setSortBy] = useState<SubSortBy>("custom");
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchTagModal, setBatchTagModal] = useState(false);
+  const [batchTagInput, setBatchTagInput] = useState<string[]>([]);
+  const [pinningId, setPinningId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -1294,6 +1419,34 @@ export default function SubscriptionPage() {
   const [detailTab, setDetailTab] = useState<"import" | "traffic">("import");
   // The subscription whose QR code is open in the detail dialog.
   const [qrFor, setQrFor] = useState<number | null>(null);
+
+  const listSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const setViewMode = (next: SubViewMode) => {
+    setViewModeState(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {}
+  };
+
+  const updateCollapsed = (
+    updater: (prev: Record<string, boolean>) => Record<string, boolean>,
+  ) => {
+    setCollapsedState((prev) => {
+      const next = updater(prev);
+
+      try {
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
+      } catch {}
+
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!detail) setDetailTab("import");
@@ -1433,36 +1586,97 @@ export default function SubscriptionPage() {
     }
   };
 
-  /** Swaps two groups by id, so it works on a search-filtered list too. */
-  const moveGroup = async (a: number, b: number) => {
-    const next = [...groups];
-    const i = next.findIndex((g) => g.id === a);
-    const j = next.findIndex((g) => g.id === b);
+  const togglePin = async (s: SubscriptionItem) => {
+    setPinningId(s.id);
+    const nextPinned = !s.pinned;
 
-    if (i < 0 || j < 0) return;
-    [next[i], next[j]] = [next[j], next[i]];
+    setSubs((items) =>
+      items.map((x) => (x.id === s.id ? { ...x, pinned: nextPinned } : x)),
+    );
+    try {
+      const res = await batchSubscriptions({
+        ids: [s.id],
+        action: nextPinned ? "pin" : "unpin",
+      });
+
+      if (res.code !== 0) {
+        toast.error(res.msg || tr("操作失败"));
+        await load();
+      } else {
+        toast.success(nextPinned ? tr("已置顶") : tr("已取消置顶"));
+      }
+    } finally {
+      setPinningId(null);
+    }
+  };
+
+  const runBatch = async (
+    action: SubscriptionBatchAction,
+    days?: number,
+    tags?: string[],
+  ) => {
+    const ids = Array.from(selectedIds);
+
+    if (ids.length === 0) return;
+    setBatchBusy(true);
+    try {
+      const res = await batchSubscriptions({ ids, action, days, tags });
+
+      if (res.code !== 0) {
+        toast.error(res.msg || tr("操作失败"));
+
+        return;
+      }
+      const msgMap: Record<SubscriptionBatchAction, string> = {
+        enable: tr("已启用 {count} 个订阅", { count: ids.length }),
+        disable: tr("已停用 {count} 个订阅", { count: ids.length }),
+        "reset-traffic": tr("已重置 {count} 个订阅流量", { count: ids.length }),
+        "extend-days": tr("已为 {count} 个订阅续期 {days} 天", {
+          count: ids.length,
+          days: days ?? 0,
+        }),
+        "add-tag": tr("已为 {count} 个订阅添加标签", { count: ids.length }),
+        "set-tags": tr("已更新 {count} 个订阅标签", { count: ids.length }),
+        "remove-tag": tr("已移除标签"),
+        pin: tr("已置顶 {count} 个订阅", { count: ids.length }),
+        unpin: tr("已取消置顶 {count} 个订阅", { count: ids.length }),
+      };
+
+      showResult(res.msg, msgMap[action]);
+      await load();
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const reorderGroups = async (ids: number[]) => {
+    const byId = new Map(groups.map((g) => [g.id, g]));
+    const next = ids
+      .map((id) => byId.get(id))
+      .filter((g): g is NodeGroupItem => Boolean(g));
+
+    if (next.length !== groups.length) return;
     setGroups(next);
-    const res = await orderNodeGroups(next.map((g) => g.id));
+    const res = await orderNodeGroups(ids);
 
     if (res.code !== 0) {
-      toast.error(res.msg || "排序失败");
+      toast.error(res.msg || tr("排序失败"));
       await load();
     }
   };
 
-  /** Swaps two subscriptions by id, so it works on a search-filtered list too. */
-  const moveSub = async (a: number, b: number) => {
-    const next = [...subs];
-    const i = next.findIndex((s) => s.id === a);
-    const j = next.findIndex((s) => s.id === b);
+  const reorderSubs = async (ids: number[]) => {
+    const byId = new Map(subs.map((s) => [s.id, s]));
+    const next = ids
+      .map((id) => byId.get(id))
+      .filter((s): s is SubscriptionItem => Boolean(s));
 
-    if (i < 0 || j < 0) return;
-    [next[i], next[j]] = [next[j], next[i]];
+    if (next.length !== subs.length) return;
     setSubs(next);
-    const res = await orderSubscriptions(next.map((s) => s.id));
+    const res = await orderSubscriptions(ids);
 
     if (res.code !== 0) {
-      toast.error(res.msg || "排序失败");
+      toast.error(res.msg || tr("排序失败"));
       await load();
     }
   };
@@ -1516,138 +1730,265 @@ export default function SubscriptionPage() {
     }
   };
 
-  if (loading) return <PageLoadingState message="正在加载..." />;
-
-  const groupName = new Map(groups.map((g) => [g.id, g.name]));
-  const q = query.trim().toLowerCase();
-  const shownSubs = q
-    ? subs.filter((s) => `${s.name} ${s.remark}`.toLowerCase().includes(q))
-    : subs;
-  const shownGroups = q
-    ? groups.filter((g) => g.name.toLowerCase().includes(q))
-    : groups;
-  const sourceText = (s: SubscriptionItem) =>
-    (s.groupIds ?? [])
-      .map((id) => groupName.get(id))
-      .filter(Boolean)
-      .join("、") || "未选节点组";
-  const stateChip = (s: SubscriptionItem) =>
-    !s.enabled ? (
-      <Chip size="sm" variant="flat">
-        已停用
-      </Chip>
-    ) : (
-      !s.active && (
-        <Chip color="danger" size="sm" variant="flat">
-          {s.overQuota ? "流量用完" : "已过期"}
-        </Chip>
-      )
-    );
-  const actions = (s: SubscriptionItem) => (
-    <>
-      <Button
-        isIconOnly
-        aria-label={`复制 ${s.name} 的订阅链接`}
-        className="text-default-500"
-        size="sm"
-        title="复制订阅链接"
-        variant="light"
-        onPress={() => copyText(url(s), "订阅链接已复制")}
-      >
-        <Copy className="h-4 w-4" />
-      </Button>
-      {/* Off: the link stops working and its nodes are cut off. */}
-      <span
-        className="flex"
-        title={s.enabled ? "已启用，点击停用订阅" : "已停用，点击启用订阅"}
-      >
-        <Switch
-          aria-label={`${s.enabled ? "停用" : "启用"} ${s.name}`}
-          isDisabled={toggling === s.id}
-          isSelected={s.enabled}
-          size="sm"
-          onValueChange={() => toggle(s)}
-        />
-      </span>
-    </>
+  const groupName = useMemo(
+    () => new Map(groups.map((g) => [g.id, g.name])),
+    [groups],
   );
-  const row = (s: SubscriptionItem, i: number) => (
-    <div
+
+  // Collect all tags across subscriptions with counts, sorted by frequency.
+  const allTags = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const s of subs) {
+      for (const tg of s.tags ?? []) {
+        map.set(tg, (map.get(tg) ?? 0) + 1);
+      }
+    }
+
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+  }, [subs]);
+
+  const tagSuggestions = useMemo(() => allTags.map(([tag]) => tag), [allTags]);
+
+  const sourceText = useCallback(
+    (s: SubscriptionItem) =>
+      (s.groupIds ?? [])
+        .map((id) => groupName.get(id))
+        .filter(Boolean)
+        .join("、") || tr("未选节点组"),
+    [groupName, tr],
+  );
+
+  const q = query.trim().toLowerCase();
+
+  // Filter + sort subscriptions across all dimensions.
+  const shownSubs = useMemo(() => {
+    const list = subs.filter((s) => {
+      if (statusFilter === "active" && !s.active) return false;
+      if (statusFilter === "expiring" && !isExpiringSoon(s)) return false;
+      if (statusFilter === "issue" && !isSubIssue(s)) return false;
+      if (statusFilter === "disabled" && s.enabled) return false;
+      if (groupFilter > 0 && !(s.groupIds ?? []).includes(groupFilter))
+        return false;
+      if (tagFilter === "__pinned__" && !s.pinned) return false;
+      if (
+        tagFilter &&
+        tagFilter !== "__pinned__" &&
+        !(s.tags ?? []).includes(tagFilter)
+      )
+        return false;
+      if (q) {
+        const haystack = [
+          s.name,
+          s.remark,
+          s.userName ?? "",
+          ...(s.tags ?? []),
+          ...(s.groupIds ?? []).map((id) => groupName.get(id) ?? ""),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        if (!haystack.includes(q)) return false;
+      }
+
+      return true;
+    });
+
+    if (sortBy === "custom") {
+      // Keep user's exact drag order when dragging in flat unfiltered mode;
+      // otherwise float pinned items gently to the top.
+      if (
+        viewMode === "flat" &&
+        !q &&
+        statusFilter === "all" &&
+        groupFilter === 0 &&
+        !tagFilter
+      ) {
+        return list;
+      }
+
+      return [...list].sort(
+        (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)),
+      );
+    }
+
+    return [...list].sort((a, b) => {
+      if (sortBy === "expiry") {
+        const ae = a.expireTime || Number.MAX_SAFE_INTEGER;
+        const be = b.expireTime || Number.MAX_SAFE_INTEGER;
+
+        return ae - be;
+      }
+      if (sortBy === "traffic") {
+        return (
+          b.uploadBytes + b.downloadBytes - (a.uploadBytes + a.downloadBytes)
+        );
+      }
+      if (sortBy === "ratio") {
+        return usagePercent(b) - usagePercent(a);
+      }
+
+      return a.name.localeCompare(b.name, "zh-CN");
+    });
+  }, [
+    subs,
+    statusFilter,
+    groupFilter,
+    tagFilter,
+    q,
+    groupName,
+    sortBy,
+    viewMode,
+  ]);
+
+  const shownGroups = useMemo(() => {
+    if (!q) return groups;
+
+    return groups.filter((g) => {
+      const hay = [g.name, ...g.subscriptions.map((s) => s.name)]
+        .join(" ")
+        .toLowerCase();
+
+      return hay.includes(q);
+    });
+  }, [groups, q]);
+
+  // Group subscriptions by primary node group (with Pinned section on top).
+  const groupedSections = useMemo(() => {
+    const sections: Array<{
+      key: string;
+      title: string;
+      groupId?: number;
+      pinned?: boolean;
+      items: SubscriptionItem[];
+    }> = [];
+
+    const pinnedItems =
+      groupFilter === 0 && tagFilter !== "__pinned__"
+        ? shownSubs.filter((s) => s.pinned)
+        : [];
+    const rest =
+      pinnedItems.length > 0 ? shownSubs.filter((s) => !s.pinned) : shownSubs;
+
+    if (pinnedItems.length > 0) {
+      sections.push({
+        key: "__pinned__",
+        title: tr("已置顶"),
+        pinned: true,
+        items: pinnedItems,
+      });
+    }
+
+    const byGroup = new Map<number, SubscriptionItem[]>();
+    const ungrouped: SubscriptionItem[] = [];
+
+    for (const s of rest) {
+      const primaryId = groupFilter > 0 ? groupFilter : (s.groupIds?.[0] ?? 0);
+
+      if (primaryId > 0 && groupName.has(primaryId)) {
+        const bucket = byGroup.get(primaryId) ?? [];
+
+        bucket.push(s);
+        byGroup.set(primaryId, bucket);
+      } else {
+        ungrouped.push(s);
+      }
+    }
+
+    for (const g of groups) {
+      const items = byGroup.get(g.id);
+
+      if (items?.length) {
+        sections.push({
+          key: `g-${g.id}`,
+          title: g.name,
+          groupId: g.id,
+          items,
+        });
+      }
+    }
+
+    if (ungrouped.length > 0) {
+      sections.push({
+        key: "__none__",
+        title: tr("未选节点组"),
+        items: ungrouped,
+      });
+    }
+
+    return sections;
+  }, [shownSubs, groups, groupName, groupFilter, tagFilter, tr]);
+
+  if (loading) return <PageLoadingState message={tr("正在加载...")} />;
+
+  const isFiltered =
+    Boolean(q) ||
+    statusFilter !== "all" ||
+    groupFilter !== 0 ||
+    tagFilter !== "";
+  const canDragSubs =
+    viewMode === "flat" &&
+    sortBy === "custom" &&
+    !isFiltered &&
+    !batchMode &&
+    shownSubs.length > 1;
+  const allCollapsed =
+    groupedSections.length > 0 &&
+    groupedSections.every((sec) => Boolean(collapsed[sec.key]));
+
+  const toggleCollapseAll = () => {
+    const nextState = !allCollapsed;
+
+    updateCollapsed(() => {
+      const out: Record<string, boolean> = {};
+
+      for (const sec of groupedSections) {
+        out[sec.key] = nextState;
+      }
+
+      return out;
+    });
+  };
+
+  const resetFilters = () => {
+    setQuery("");
+    setStatusFilter("all");
+    setGroupFilter(0);
+    setTagFilter("");
+  };
+
+  const renderSubRow = (s: SubscriptionItem, sortable: boolean) => (
+    <SubRowItem
       key={s.id}
-      className="list-row group flex cursor-pointer items-center gap-3 border-b border-divider px-2 py-3 transition-colors hover:bg-default-50"
-      role="button"
-      tabIndex={0}
-      onClick={() => setDetailId(s.id)}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          setDetailId(s.id);
-        }
-      }}
-    >
-      <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.active ? "bg-success" : s.enabled ? "bg-danger" : "bg-default-300"}`}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate">{s.name}</span>
-          {stateChip(s)}
-        </div>
-        <div className="truncate text-xs text-default-400">
-          {s.nodeCount} 个节点 · {sourceText(s)}
-          {s.expireTime ? ` · ${expiryLabel(s.expireTime)}` : ""}
-          {s.remark ? ` · ${s.remark}` : ""}
-        </div>
-        {s.kind === "share" && (
+      batchMode={batchMode}
+      pinning={pinningId === s.id}
+      rateLabel={
+        s.kind === "share" ? (
           <RateLabel rate={s.active ? rates[s.id] : undefined} />
-        )}
-        {s.trafficLimit > 0 && (
-          <div className="mt-1.5 max-w-xs">
-            <UsageBar s={s} track="bg-default-100" />
-          </div>
-        )}
-      </div>
-      <div className="hidden w-40 shrink-0 text-right text-sm tabular-nums sm:block">
-        {formatTraffic(s.uploadBytes + s.downloadBytes)}
-        <span className="text-xs text-default-400">
-          {s.trafficLimit ? ` / ${formatTraffic(s.trafficLimit)}` : ""}
-        </span>
-      </div>
-      <div
-        className="flex shrink-0 items-center gap-2"
-        role="presentation"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <span className="flex items-center transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-          <Button
-            isIconOnly
-            aria-label={`上移 ${s.name}`}
-            className="text-default-500"
-            isDisabled={i === 0}
-            size="sm"
-            title="上移"
-            variant="light"
-            onPress={() => void moveSub(s.id, shownSubs[i - 1].id)}
-          >
-            <ArrowUp className="h-4 w-4" />
-          </Button>
-          <Button
-            isIconOnly
-            aria-label={`下移 ${s.name}`}
-            className="text-default-500"
-            isDisabled={i === shownSubs.length - 1}
-            size="sm"
-            title="下移"
-            variant="light"
-            onPress={() => void moveSub(s.id, shownSubs[i + 1].id)}
-          >
-            <ArrowDown className="h-4 w-4" />
-          </Button>
-        </span>
-        {actions(s)}
-      </div>
-    </div>
+        ) : undefined
+      }
+      selected={selectedIds.has(s.id)}
+      sortable={sortable}
+      sourceText={sourceText(s)}
+      sub={s}
+      toggling={toggling === s.id}
+      onClone={() => setDraft(cloneDraftFrom(s))}
+      onCopyLink={() => copyText(url(s), tr("订阅链接已复制"))}
+      onOpenDetail={() => setDetailId(s.id)}
+      onTagClick={(tag) => setTagFilter((prev) => (prev === tag ? "" : tag))}
+      onToggleEnabled={() => void toggle(s)}
+      onTogglePin={() => void togglePin(s)}
+      onToggleSelect={() =>
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+
+          if (next.has(s.id)) next.delete(s.id);
+          else next.add(s.id);
+
+          return next;
+        })
+      }
+    />
   );
 
   return (
@@ -1655,10 +1996,14 @@ export default function SubscriptionPage() {
       <PageHeader
         description={
           tab === "subs"
-            ? "每个订阅一个链接：选节点组、分流和链式代理，客户端自动识别格式"
-            : "节点组：从自建、导入的节点和订阅源里挑选，筛选、改名后给订阅用，多个订阅可以共用"
+            ? tr(
+                "每个订阅一个链接：选节点组、分流和链式代理，客户端自动识别格式",
+              )
+            : tr(
+                "节点组：从自建、导入的节点和订阅源里挑选，筛选、改名后给订阅用，多个订阅可以共用",
+              )
         }
-        title="订阅"
+        title={tr("订阅")}
       />
 
       <TemplatesModal
@@ -1671,24 +2016,50 @@ export default function SubscriptionPage() {
 
       <PageTabs
         tabs={[
-          { key: "subs", label: "订阅", badge: subs.length },
-          { key: "groups", label: "节点组", badge: groups.length },
+          { key: "subs", label: tr("订阅"), badge: subs.length },
+          { key: "groups", label: tr("节点组"), badge: groups.length },
         ]}
         value={tab}
-        onChange={setTab}
+        onChange={(next) => {
+          setTab(next);
+          if (next === "groups") {
+            setBatchMode(false);
+            setSelectedIds(new Set());
+          }
+        }}
       />
+
+      {tab === "subs" && subs.length > 0 && (
+        <SubSummaryStrip
+          filteredSubs={shownSubs}
+          isFiltered={isFiltered}
+          statusFilter={statusFilter}
+          subs={subs}
+          onSelectStatus={setStatusFilter}
+        />
+      )}
+
       <PageToolbar
-        placeholder={tab === "subs" ? "搜索订阅名称或备注" : "搜索节点组名称"}
+        placeholder={
+          tab === "subs"
+            ? tr("搜索订阅名、节点组、标签或备注")
+            : tr("搜索节点组或关联订阅")
+        }
         primary={
           tab === "subs"
             ? {
                 key: "create",
-                label: "新建订阅",
-                onPress: () => setDraft(draftFrom(undefined, sources)),
+                label: tr("新建订阅"),
+                onPress: () =>
+                  setDraft(
+                    groupFilter > 0
+                      ? draftForGroup(groupFilter, sources)
+                      : draftFrom(undefined, sources),
+                  ),
               }
             : {
                 key: "create-group",
-                label: "新建节点组",
+                label: tr("新建节点组"),
                 onPress: () => setGroupDraft(groupDraftFrom()),
               }
         }
@@ -1697,7 +2068,7 @@ export default function SubscriptionPage() {
       >
         <ToolbarButton onPress={() => setTemplatesOpen(true)}>
           <LayoutTemplate className="h-3.5 w-3.5" />
-          模板
+          {tr("模板")}
           {templates.length > 0 && (
             <span className="tabular-nums text-default-400">
               {templates.length}
@@ -1709,24 +2080,138 @@ export default function SubscriptionPage() {
       {tab === "groups" ? (
         <NodeGroupList
           groups={shownGroups}
+          sortable={!q}
+          subs={subs}
+          onClone={(g) => setGroupDraft(groupCloneDraftFrom(g))}
+          onCreateSub={(gid) => {
+            setDraft(draftForGroup(gid, sources));
+          }}
           onEdit={(g) => setGroupDraft(groupDraftFrom(g))}
-          onMove={(i, d) =>
-            void moveGroup(shownGroups[i].id, shownGroups[i + d].id)
-          }
+          onInspectSubs={(gid) => {
+            setQuery("");
+            setStatusFilter("all");
+            setTagFilter("");
+            setGroupFilter(gid);
+            setTab("subs");
+          }}
+          onReorder={(ids) => void reorderGroups(ids)}
         />
       ) : subs.length === 0 ? (
         <EmptyHint
           text={
             inbounds.length === 0
-              ? "还没有节点。先在“节点”里搭建或导入，订阅里才会有内容"
-              : "每个订阅一个链接，有独立凭据：可以设到期和流量上限，停用后自动断开"
+              ? tr("还没有节点。先在“节点”里搭建或导入，订阅里才会有内容")
+              : tr(
+                  "每个订阅一个链接，有独立凭据：可以设到期和流量上限，停用后自动断开",
+                )
           }
         />
       ) : (
         <>
-          <div className="flex flex-col">
-            {shownSubs.map((s, i) => row(s, i))}
-          </div>
+          <SubFilterBar
+            allCollapsed={allCollapsed}
+            allTags={allTags}
+            batchMode={batchMode}
+            groupFilter={groupFilter}
+            groups={groups}
+            sortBy={sortBy}
+            statusFilter={statusFilter}
+            subs={subs}
+            tagFilter={tagFilter}
+            viewMode={viewMode}
+            onGroupFilter={setGroupFilter}
+            onSortBy={setSortBy}
+            onStatusFilter={setStatusFilter}
+            onTagFilter={setTagFilter}
+            onToggleBatchMode={() => {
+              setBatchMode((on) => {
+                if (on) setSelectedIds(new Set());
+
+                return !on;
+              });
+            }}
+            onToggleCollapseAll={toggleCollapseAll}
+            onViewMode={setViewMode}
+          />
+
+          {batchMode && (
+            <SubBatchBar
+              busy={batchBusy}
+              selectedIds={selectedIds}
+              visibleIds={shownSubs.map((s) => s.id)}
+              onBatch={(action, days) => runBatch(action, days)}
+              onClearSelection={() => setSelectedIds(new Set())}
+              onExit={() => {
+                setBatchMode(false);
+                setSelectedIds(new Set());
+              }}
+              onOpenTagModal={() => {
+                setBatchTagInput([]);
+                setBatchTagModal(true);
+              }}
+              onSelectAll={() =>
+                setSelectedIds(new Set(shownSubs.map((s) => s.id)))
+              }
+            />
+          )}
+
+          {shownSubs.length === 0 ? (
+            <EmptyHint
+              action={{
+                key: "reset-filters",
+                label: tr("清除筛选"),
+                onPress: resetFilters,
+              }}
+              text={tr("没有符合当前筛选条件的订阅。")}
+            />
+          ) : viewMode === "grouped" ? (
+            <div className="space-y-3">
+              {groupedSections.map((sec) => (
+                <SubGroupSection
+                  key={sec.key}
+                  collapsed={Boolean(collapsed[sec.key])}
+                  items={sec.items}
+                  pinned={sec.pinned}
+                  renderRow={(s) => renderSubRow(s, false)}
+                  title={sec.title}
+                  onCreateInGroup={
+                    sec.groupId
+                      ? () => setDraft(draftForGroup(sec.groupId!, sources))
+                      : undefined
+                  }
+                  onToggleCollapse={() =>
+                    updateCollapsed((prev) => ({
+                      ...prev,
+                      [sec.key]: !prev[sec.key],
+                    }))
+                  }
+                />
+              ))}
+            </div>
+          ) : (
+            <DndContext
+              collisionDetection={closestCenter}
+              sensors={listSensors}
+              onDragEnd={({ active, over }) => {
+                if (!canDragSubs || !over || active.id === over.id) return;
+                const ids = shownSubs.map((s) => s.id);
+                const from = ids.indexOf(Number(active.id));
+                const to = ids.indexOf(Number(over.id));
+
+                if (from < 0 || to < 0) return;
+                void reorderSubs(arrayMove(ids, from, to));
+              }}
+            >
+              <SortableContext
+                items={shownSubs.map((s) => s.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="divide-y divide-divider/70 overflow-hidden rounded-xl border border-divider bg-background">
+                  {shownSubs.map((s) => renderSubRow(s, canDragSubs))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
         </>
       )}
 
@@ -1748,7 +2233,7 @@ export default function SubscriptionPage() {
                     {detail.name}
                   </h2>
                   <p className="text-small font-normal text-default-500">
-                    {detail.nodeCount} 个节点
+                    {tr("{count} 个节点", { count: detail.nodeCount })}
                     {detail.expireTime
                       ? ` · ${expiryLabel(detail.expireTime)}`
                       : ""}
@@ -1764,7 +2249,7 @@ export default function SubscriptionPage() {
                         <span className="text-default-500">
                           {detail.trafficLimit
                             ? ` / ${formatTraffic(detail.trafficLimit)}`
-                            : " · 不限流量"}
+                            : tr(" · 不限流量")}
                         </span>
                       </span>
                       <Button
@@ -1777,36 +2262,38 @@ export default function SubscriptionPage() {
                         variant="flat"
                         onPress={resetTraffic}
                       >
-                        重置流量
+                        {tr("重置流量")}
                       </Button>
                     </div>
                     {detail.kind === "share" && (
                       <RateLabel
-                        details
                         rate={detail.active ? rates[detail.id] : undefined}
+                        showCoverage={false}
                       />
                     )}
                     {detail.trafficLimit > 0 && (
-                      <UsageBar s={detail} track="bg-default-200" />
+                      <SubUsageBar s={detail} track="bg-default-200" />
                     )}
                     <p
                       className={`text-xs ${detail.overQuota ? "text-danger" : "text-default-500"}`}
                     >
                       {detail.overQuota
-                        ? "流量已用完，已从服务器上断开"
+                        ? tr("流量已用完，已从服务器上断开")
                         : [
                             `↑ ${formatTraffic(detail.uploadBytes)} ↓ ${formatTraffic(detail.downloadBytes)}`,
                             `${new Date(detail.trafficSince).toLocaleDateString(undefined, { month: "numeric", day: "numeric" })} 起`,
                             detail.resetDay
-                              ? `每月 ${detail.resetDay} 号重置`
-                              : "不自动重置",
+                              ? tr("每月 {day} 号重置", {
+                                  day: detail.resetDay,
+                                })
+                              : tr("不自动重置"),
                           ].join(" · ")}
                     </p>
                   </div>
                   <Segmented
                     options={[
-                      ["import", "导入"],
-                      ["traffic", "流量统计"],
+                      ["import", tr("导入")],
+                      ["traffic", tr("流量统计")],
                     ]}
                     value={detailTab}
                     onChange={setDetailTab}
@@ -1825,17 +2312,17 @@ export default function SubscriptionPage() {
                           size="sm"
                           startContent={<Copy className="h-3.5 w-3.5" />}
                           onPress={() =>
-                            copyText(url(detail), "订阅链接已复制")
+                            copyText(url(detail), tr("订阅链接已复制"))
                           }
                         >
-                          复制订阅链接（自动识别客户端）
+                          {tr("复制订阅链接（自动识别客户端）")}
                         </Button>
                         <Button
                           isIconOnly
                           aria-expanded={qrFor === detail.id}
-                          aria-label="订阅二维码"
+                          aria-label={tr("订阅二维码")}
                           size="sm"
-                          title="订阅二维码"
+                          title={tr("订阅二维码")}
                           variant={qrFor === detail.id ? "flat" : "bordered"}
                           onPress={() =>
                             setQrFor((id) =>
@@ -1850,7 +2337,7 @@ export default function SubscriptionPage() {
                         <div className="flex flex-col items-center gap-2 py-2">
                           <QrImage text={url(detail)} />
                           <p className="text-xs text-default-400">
-                            用客户端扫码导入（自动识别客户端格式）
+                            {tr("用客户端扫码导入（自动识别客户端格式）")}
                           </p>
                         </div>
                       )}
@@ -1890,7 +2377,7 @@ export default function SubscriptionPage() {
                     variant="light"
                     onPress={() => setConfirm("delete")}
                   >
-                    删除
+                    {tr("删除")}
                   </Button>
                   <Button
                     color="warning"
@@ -1898,7 +2385,21 @@ export default function SubscriptionPage() {
                     variant="light"
                     onPress={() => setConfirm("reset")}
                   >
-                    重置链接和凭据
+                    {tr("重置链接和凭据")}
+                  </Button>
+                  <Button
+                    className="gap-1.5"
+                    size="sm"
+                    startContent={<CopyPlus className="h-3.5 w-3.5" />}
+                    variant="flat"
+                    onPress={() => {
+                      const s = detail;
+
+                      onClose();
+                      setDraft(cloneDraftFrom(s));
+                    }}
+                  >
+                    {tr("克隆新建")}
                   </Button>
                   <Button
                     color="primary"
@@ -1910,7 +2411,7 @@ export default function SubscriptionPage() {
                       setDraft(draftFrom(s));
                     }}
                   >
-                    编辑
+                    {tr("编辑")}
                   </Button>
                 </ModalFooter>
               </>
@@ -1937,6 +2438,7 @@ export default function SubscriptionPage() {
                 saving={saving}
                 setDraft={setDraft}
                 sources={sources}
+                tagSuggestions={tagSuggestions}
                 templates={templates}
                 onClose={onClose}
                 onSave={save}
@@ -1978,6 +2480,62 @@ export default function SubscriptionPage() {
         </ModalContent>
       </Modal>
 
+      {/* Batch tag modal */}
+      <Modal
+        classNames={{ base: modalBase }}
+        isOpen={batchTagModal}
+        placement="center"
+        onOpenChange={setBatchTagModal}
+      >
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader>
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-default-100 text-foreground">
+                    <Tag className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h2 className="text-base font-semibold">
+                      {tr("批量添加标签")}
+                    </h2>
+                    <p className="text-xs font-normal text-default-500">
+                      {tr("为选中的 {count} 个订阅追加标签", {
+                        count: selectedIds.size,
+                      })}
+                    </p>
+                  </div>
+                </div>
+              </ModalHeader>
+              <ModalBody>
+                <TagEditorInput
+                  suggestions={tagSuggestions}
+                  value={batchTagInput}
+                  onChange={setBatchTagInput}
+                />
+              </ModalBody>
+              <ModalFooter>
+                <Button size="sm" variant="light" onPress={onClose}>
+                  {tr("取消")}
+                </Button>
+                <Button
+                  color="primary"
+                  isDisabled={batchTagInput.length === 0}
+                  isLoading={batchBusy}
+                  size="sm"
+                  onPress={async () => {
+                    await runBatch("add-tag", undefined, batchTagInput);
+                    onClose();
+                  }}
+                >
+                  {tr("确定添加")}
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
       <Modal
         classNames={{ base: modalBase }}
         isOpen={Boolean(confirm)}
@@ -1991,26 +2549,28 @@ export default function SubscriptionPage() {
                 <h2
                   className={`text-lg font-bold ${confirm === "delete" ? "text-danger" : ""}`}
                 >
-                  {confirm === "reset" ? "重置链接" : "删除订阅"}
+                  {confirm === "reset" ? tr("重置链接") : tr("删除订阅")}
                 </h2>
               </ModalHeader>
               <ModalBody>
                 <p className="text-sm text-default-600">
                   {confirm === "reset"
-                    ? "旧链接和已导入的配置会立即失效，需要用新链接重新导入。"
-                    : "订阅链接立即失效，无法恢复。"}
+                    ? tr(
+                        "旧链接和已导入的配置会立即失效，需要用新链接重新导入。",
+                      )
+                    : tr("订阅链接立即失效，无法恢复。")}
                 </p>
               </ModalBody>
               <ModalFooter>
                 <Button variant="light" onPress={onClose}>
-                  取消
+                  {tr("取消")}
                 </Button>
                 <Button
                   color={confirm === "delete" ? "danger" : "warning"}
                   isLoading={saving}
                   onPress={runConfirm}
                 >
-                  {confirm === "delete" ? "删除" : "重置"}
+                  {confirm === "delete" ? tr("删除") : tr("重置")}
                 </Button>
               </ModalFooter>
             </>
