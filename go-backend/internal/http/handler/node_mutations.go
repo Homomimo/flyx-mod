@@ -453,7 +453,7 @@ type nodeInstallCommands struct {
 var legacyImageOwners = []string{"kure29", "seren233"}
 
 // flyxImagePattern is a shell case pattern matching this project's images:
-// "ghcr.io/<owner>/*|ghcr.io/seren233/*".
+// "ghcr.io/<owner>/*|ghcr.io/kure29/*|ghcr.io/seren233/*".
 func flyxImagePattern(owner string) string {
 	patterns := []string{"ghcr.io/" + owner + "/*"}
 	for _, legacy := range legacyImageOwners {

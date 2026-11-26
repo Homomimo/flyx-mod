@@ -68,6 +68,16 @@ func TestNodeInstallPanelAddress(t *testing.T) {
 				if out.Code != 0 || !strings.Contains(rec.Body.String(), "panel.example.com:6365") {
 					t.Fatalf("%s: %s", mode, rec.Body.String())
 				}
+				for _, source := range map[string][]string{
+					"script":         {"https://github.com/Homomimo/flyx-mod/releases/download/"},
+					"docker":         {"ghcr.io/homomimo/flyx-agent:"},
+					"docker-compose": {"ghcr.io/homomimo/flyx-agent:"},
+					"all":            {"https://github.com/Homomimo/flyx-mod/releases/download/", "ghcr.io/homomimo/flyx-agent:"},
+				}[mode] {
+					if !strings.Contains(rec.Body.String(), source) {
+						t.Fatalf("%s did not use the fork source %q: %s", mode, source, rec.Body.String())
+					}
+				}
 				if strings.Contains(rec.Body.String(), "https://panel.example.com:6365/api/v1/") {
 					t.Fatalf("%s did not normalize backend URL: %s", mode, rec.Body.String())
 				}
@@ -89,7 +99,7 @@ func TestDockerInstallCommand(t *testing.T) {
 		{name: "fresh", wantName: "flyx-agent", wantMount: "/etc/flyx-agent:/etc/flyx-agent", wantImage: "flyx-agent"},
 		// Images from while the repository was under seren233 are ours too.
 		{name: "legacy", existing: "flux_agent", mount: "/srv/old agent", wantName: "flux_agent", wantMount: "/srv/old agent:/etc/flux_agent", wantImage: "flyx-agent"},
-		{name: "legacy-current-owner", existing: "flux_agent=ghcr.io/kure29/flux-agent:3.9.0", mount: "/srv/old agent", wantName: "flux_agent", wantMount: "/srv/old agent:/etc/flux_agent", wantImage: "flyx-agent"},
+		{name: "legacy-kure29", existing: "flux_agent=ghcr.io/kure29/flux-agent:3.9.0", mount: "/srv/old agent", wantName: "flux_agent", wantMount: "/srv/old agent:/etc/flux_agent", wantImage: "flyx-agent"},
 		// flux-panel / FLVX agents share the container name; they are left alone.
 		{name: "foreign-legacy", existing: "flux_agent=ghcr.io/sagit-chu/flux-agent:2.0", mount: "/etc/flux_agent", wantName: "flyx-agent", wantMount: "/etc/flyx-agent:/etc/flyx-agent", wantImage: "flyx-agent"},
 		{name: "foreign-legacy-and-current", existing: "flyx-agent,flux_agent=ghcr.io/sagit-chu/flux-agent:2.0", mount: "agent-volume", wantName: "flyx-agent", wantMount: "agent-volume:/etc/flyx-agent", wantImage: "flyx-agent"},

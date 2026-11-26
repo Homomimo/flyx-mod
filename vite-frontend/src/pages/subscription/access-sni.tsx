@@ -96,7 +96,8 @@ export function AccessSNI({
       )}
       {data.limited && <p>仅展示部分域名及其可汇总次数。</p>}
       <p className="text-default-400">
-        Agent 自动采集，按所选时段统计可见的 TLS 握手，不是网页浏览次数。仅包含可读取的自建节点。
+        Agent 自动采集，按所选时段统计可读取的自建节点上可见的 TLS
+        握手。同一网页可能产生多次握手。
       </p>
     </div>
   );

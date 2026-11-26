@@ -514,10 +514,6 @@ func startMockNodeSession(t *testing.T, baseURL string, nodeSecret string) func(
 }
 
 func startMockNodeSessionWithHook(t *testing.T, baseURL string, nodeSecret string, onCommand func(cmdType string)) func() {
-	return startMockNodeResponder(t, baseURL, nodeSecret, onCommand, nil)
-}
-
-func startMockNodeResponder(t *testing.T, baseURL, nodeSecret string, onCommand func(string), data func(string) any) func() {
 	t.Helper()
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -597,11 +593,6 @@ func startMockNodeResponder(t *testing.T, baseURL, nodeSecret string, onCommand 
 					"averageTime": 8.5,
 					"packetLoss":  0,
 					"message":     "mock tcp ok",
-				}
-			}
-			if data != nil {
-				if custom := data(cmd.Type); custom != nil {
-					respPayload["data"] = custom
 				}
 			}
 			respBytes, err := json.Marshal(respPayload)
