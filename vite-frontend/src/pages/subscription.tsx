@@ -1308,7 +1308,10 @@ export default function SubscriptionPage() {
   );
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const rates = useSubscriptionRates(
-    tab === "subs" && !draft && !templatesOpen && subs.length > 0,
+    tab === "subs" &&
+      !draft &&
+      !templatesOpen &&
+      subs.some((s) => s.kind === "share"),
   );
   const loadTemplates = useCallback(async () => {
     try {
@@ -1596,7 +1599,9 @@ export default function SubscriptionPage() {
           {s.expireTime ? ` · ${expiryLabel(s.expireTime)}` : ""}
           {s.remark ? ` · ${s.remark}` : ""}
         </div>
-        <RateLabel rate={s.active ? rates[s.id] : undefined} />
+        {s.kind === "share" && (
+          <RateLabel rate={s.active ? rates[s.id] : undefined} />
+        )}
         {s.trafficLimit > 0 && (
           <div className="mt-1.5 max-w-xs">
             <UsageBar s={s} track="bg-default-100" />
@@ -1775,10 +1780,12 @@ export default function SubscriptionPage() {
                         重置流量
                       </Button>
                     </div>
-                    <RateLabel
-                      details
-                      rate={detail.active ? rates[detail.id] : undefined}
-                    />
+                    {detail.kind === "share" && (
+                      <RateLabel
+                        details
+                        rate={detail.active ? rates[detail.id] : undefined}
+                      />
+                    )}
                     {detail.trafficLimit > 0 && (
                       <UsageBar s={detail} track="bg-default-200" />
                     )}
@@ -1805,7 +1812,10 @@ export default function SubscriptionPage() {
                     onChange={setDetailTab}
                   />
                   {detailTab === "traffic" ? (
-                    <SubTrafficStats id={detail.id} />
+                    <SubTrafficStats
+                      id={detail.id}
+                      showSNI={detail.kind === "share"}
+                    />
                   ) : (
                     <>
                       <div className="flex gap-2">

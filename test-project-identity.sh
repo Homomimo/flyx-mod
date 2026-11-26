@@ -101,6 +101,7 @@ test_panel_legacy_detection() (
   # Images published while the repository was briefly under seren233 are ours too.
   printf 'services:\n  backend:\n    image: ghcr.io/kure29/flux-panel-backend:3.3.0\n' > docker-compose.yml
   is_flyx_deploy_dir .
+  is_flyx_image ghcr.io/homomimo/flyx-panel-backend:3.9.0
   is_flyx_image ghcr.io/kure29/flyx-panel-backend:3.8.0
   is_flyx_image ghcr.io/seren233/flyx-panel-backend:3.9.0
   ! is_flyx_image ghcr.io/sagit-chu/flux-panel-backend:2.0
@@ -158,6 +159,7 @@ with tempfile.TemporaryDirectory(prefix='flyx-compose-') as tmp:
   new=render(root/name,base+'FLYX_VERSION=new\nFLYX_WEBAUTHN_ORIGIN=\nPANEL_BACKEND_CONTAINER=flyx-panel-backend\nPANEL_FRONTEND_CONTAINER=flyx-panel-frontend\nPANEL_POSTGRES_CONTAINER=flyx-panel-postgres\nFLYX_SQLITE_VOLUME=flyx-sqlite-data\nFLYX_POSTGRES_VOLUME=flyx-postgres-data\nFLYX_NETWORK=flyx-network\n')
   assert new['services']['backend']['container_name']=='flyx-panel-backend'
   assert new['services']['backend']['image']=='ghcr.io/homomimo/flyx-panel-backend:new'
+  assert new['services']['frontend']['image']=='ghcr.io/homomimo/flyx-panel-frontend:new'
   assert new['volumes']['sqlite_data']['name']=='flyx-sqlite-data'
   assert new['volumes']['postgres_data']['name']=='flyx-postgres-data'
   assert new['services']['backend']['environment']['FLYX_WEBAUTHN_ORIGIN']==''

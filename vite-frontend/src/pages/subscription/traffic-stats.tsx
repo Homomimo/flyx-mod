@@ -15,7 +15,7 @@ import {
 
 import { AccessSNI } from "./access-sni";
 
-import { getSubscriptionTraffic } from "@/api";
+import { getSubscriptionTraffic, getUserSubscriptionTraffic } from "@/api";
 import { useVisiblePolling } from "@/hooks/use-visible-polling";
 import { Segmented } from "@/pages/subscription/controls";
 
@@ -88,7 +88,15 @@ function axisBytes(v: number): string {
  * A subscription's traffic by hour, day or month: totals, an up / down
  * line chart and the per-bucket list.
  */
-export function SubTrafficStats({ id }: { id: number }) {
+export function SubTrafficStats({
+  id,
+  scope = "admin",
+  showSNI = false,
+}: {
+  id: number;
+  scope?: "admin" | "user";
+  showSNI?: boolean;
+}) {
   const [range, setRange] = useState<SubTrafficRange>("hour");
   const [data, setData] = useState<{ id: number; traffic: SubTraffic } | null>(
     null,
@@ -111,7 +119,10 @@ export function SubTrafficStats({ id }: { id: number }) {
       if (loading) return;
       loading = true;
       try {
-        const res = await getSubscriptionTraffic(id, range);
+        const res =
+          scope === "user"
+            ? await getUserSubscriptionTraffic(id, range)
+            : await getSubscriptionTraffic(id, range);
 
         if (!active) return;
         if (res.code === 0 && res.data) {
@@ -136,7 +147,7 @@ export function SubTrafficStats({ id }: { id: number }) {
       active = false;
       loadRef.current = null;
     };
-  }, [id, range]);
+  }, [id, range, scope]);
   useVisiblePolling(async () => {
     await loadRef.current?.();
   }, 30_000);
@@ -219,6 +230,7 @@ export function SubTrafficStats({ id }: { id: number }) {
                 onClick={(e: {
                   activeTooltipIndex?: string | number | null;
                 }) => {
+                  if (!showSNI) return;
                   const p =
                     e.activeTooltipIndex != null
                       ? points[Number(e.activeTooltipIndex)]
@@ -322,7 +334,7 @@ export function SubTrafficStats({ id }: { id: number }) {
             )}
           </div>
 
-          {selected && (
+          {showSNI && selected && (
             <section className="space-y-2 rounded-xl border border-divider p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">访问 SNI</h4>

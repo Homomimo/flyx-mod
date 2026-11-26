@@ -46,8 +46,7 @@ curl -L https://github.com/Homomimo/flyx-mod/releases/latest/download/panel_inst
 到 [Releases](https://github.com/Homomimo/flyx-mod/releases) 复制对应版本的命令，例如：
 
 ```bash
-VERSION='替换为本仓库已发布的版本号'
-curl -L https://github.com/Homomimo/flyx-mod/releases/download/${VERSION}/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
+curl -L https://github.com/Homomimo/flyx-mod/releases/download/3.0.7/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
 ```
 
 ## agent 升级
