@@ -8,9 +8,7 @@ import { formatTraffic } from "@/utils/traffic";
 type Pair = { up: number; down: number };
 type Rate = {
   instant: Pair | null;
-  average: Pair | null;
   valid: number;
-  averageValid: number;
   expected: number;
 };
 // Older panels ignore ?v=2 and return bare pairs. Don't invent coverage.
@@ -132,30 +130,23 @@ function coverage(valid: number, expected: number) {
 }
 export function RateLabel({
   rate,
-  details = false,
+  showCoverage = true,
 }: {
   rate?: WireRate;
-  details?: boolean;
+  showCoverage?: boolean;
 }) {
   const measured = rate && "instant" in rate ? rate : undefined;
   const instant = rate && "up" in rate ? rate : measured?.instant;
 
   return (
-    <div
-      className="text-xs tabular-nums text-default-500"
+    <span
+      className="block text-xs tabular-nums text-default-500"
       title="↑ 上传、↓ 下载；仅汇总当前分发订阅有有效样本的直连节点。0 B/s 表示已测得空闲，— 表示无有效样本。"
     >
-      <div>
-        实时速率 · {speed(instant)}
-        {measured && `　${coverage(measured.valid, measured.expected)}`}
-      </div>
-      {details && (
-        <div>
-          近 3 秒均速 · {speed(measured?.average)}
-          {measured &&
-            `　${coverage(measured.averageValid, measured.expected)}`}
-        </div>
-      )}
-    </div>
+      实时速率 · {speed(instant)}
+      {showCoverage &&
+        measured &&
+        `　${coverage(measured.valid, measured.expected)}`}
+    </span>
   );
 }

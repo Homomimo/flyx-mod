@@ -4,12 +4,37 @@ import type {
   NodeGroupOptions,
   NodeGroupPreview,
   RemoteSourceItem,
+  SubscriptionItem,
 } from "@/api";
 import type { InboundApiItem, InboundRelayApiItem } from "@/api/types";
 
 import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import {
+  ArrowRight,
+  CopyPlus,
+  GripVertical,
+  Layers,
+  Plus,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  rectSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 import {
   deleteNodeGroup,
@@ -18,6 +43,7 @@ import {
   saveNodeGroup,
 } from "@/api";
 import { EmptyHint } from "@/components/page-kit";
+import { useI18n } from "@/i18n";
 import { PROTOCOL_LABELS } from "@/pages/inbound/presets";
 import { Button } from "@/shadcn-bridge/heroui/button";
 import { Checkbox } from "@/shadcn-bridge/heroui/checkbox";
@@ -36,6 +62,7 @@ import {
   Segmented,
   ToggleRow,
 } from "@/pages/subscription/controls";
+import { formatTraffic } from "@/utils/traffic";
 
 /** Protocols that can carry per-user credentials (mirrors the backend). */
 const MULTI_USER_PROTOCOLS = new Set([
@@ -164,90 +191,329 @@ export function groupDraftFrom(g?: NodeGroupItem): NodeGroupDraft {
   };
 }
 
-/** The node groups, in the order subscriptions list them by default. */
+export function groupCloneDraftFrom(g: NodeGroupItem): NodeGroupDraft {
+  const base = groupDraftFrom(g);
+
+  return {
+    ...base,
+    id: undefined,
+    name: `${g.name} (副本)`,
+  };
+}
+
+function SortableNodeGroupCard({
+  g,
+  sortable,
+  groupTraffic,
+  activeSubs,
+  onEdit,
+  onClone,
+  onInspectSubs,
+  onCreateSub,
+}: {
+  g: NodeGroupItem;
+  sortable: boolean;
+  groupTraffic: number;
+  activeSubs: number;
+  onEdit: () => void;
+  onClone: () => void;
+  onInspectSubs: () => void;
+  onCreateSub: () => void;
+}) {
+  const { t } = useI18n();
+  const {
+    attributes,
+    listeners,
+    isDragging,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id: g.id, disabled: !sortable });
+
+  const filters = filterSummary(g.options);
+  const naming = namingSummary(g.options);
+  const subCount = g.subscriptions.length;
+
+  return (
+    <section
+      ref={setNodeRef}
+      className={`overflow-hidden rounded-xl border border-divider bg-background transition-colors hover:border-default-300 dark:hover:border-default-200 ${
+        isDragging ? "relative z-20 shadow-lg ring-1 ring-divider" : ""
+      }`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2 border-b border-divider/70 bg-default-50/60 px-3.5 py-2.5 dark:bg-default-50/20">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {sortable && (
+            <button
+              {...attributes}
+              {...listeners}
+              ref={setActivatorNodeRef}
+              aria-label={t("拖拽调整 {name} 的顺序", { name: g.name })}
+              className="flex h-6 w-5 shrink-0 touch-none cursor-grab items-center justify-center rounded text-default-300 transition-colors hover:bg-default-200/70 hover:text-default-500 active:cursor-grabbing"
+              type="button"
+            >
+              <GripVertical className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+            type="button"
+            onClick={onEdit}
+          >
+            <Layers
+              className="h-4 w-4 shrink-0 text-default-500"
+              strokeWidth={1.75}
+            />
+            <span className="truncate text-sm font-semibold text-foreground">
+              {g.name}
+            </span>
+            <span className="shrink-0 rounded-full bg-default-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-default-500 dark:bg-default-100/60">
+              {t("{count} 个节点", { count: g.nodeCount })}
+            </span>
+            {subCount === 0 && (
+              <Chip className="h-5 text-[10px]" size="sm" variant="flat">
+                {t("未使用")}
+              </Chip>
+            )}
+          </button>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            aria-label={t("克隆节点组")}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-default-400 transition-colors hover:bg-default-200/70 hover:text-foreground dark:hover:bg-default-100"
+            title={t("克隆节点组")}
+            type="button"
+            onClick={onClone}
+          >
+            <CopyPlus className="h-3.5 w-3.5" />
+          </button>
+          <Button
+            className="h-7 min-w-0 gap-1 px-2 text-xs text-default-600 hover:text-foreground"
+            size="sm"
+            startContent={<Plus className="h-3.5 w-3.5" />}
+            variant="light"
+            onPress={onCreateSub}
+          >
+            {t("订阅")}
+          </Button>
+        </div>
+      </div>
+
+      {/* Body: sources & processing pipeline badges */}
+      <button
+        className="block w-full px-4 py-3 text-left transition-colors hover:bg-default-50/70 dark:hover:bg-default-100/20"
+        type="button"
+        onClick={onEdit}
+      >
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="rounded-md bg-default-100 px-2 py-0.5 text-default-600 dark:bg-default-100/60 dark:text-default-400">
+            {g.sourceAll ? t("全部节点") : groupSourceText(g)}
+          </span>
+          {filters && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-default-100/70 px-2 py-0.5 text-default-500 dark:bg-default-100/40">
+              <SlidersHorizontal className="h-3 w-3" />
+              {filters}
+            </span>
+          )}
+          {naming && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-default-100/70 px-2 py-0.5 text-default-500 dark:bg-default-100/40">
+              <Sparkles className="h-3 w-3" />
+              {naming}
+            </span>
+          )}
+          {g.options.script && (
+            <span className="rounded-md bg-default-100/70 px-2 py-0.5 font-mono text-[11px] text-default-500 dark:bg-default-100/40">
+              JS
+            </span>
+          )}
+        </div>
+      </button>
+
+      {/* Footer: linked subscriptions & jump action */}
+      <div className="flex items-center justify-between gap-2 border-t border-divider/60 px-4 py-2 text-xs">
+        {subCount > 0 ? (
+          <>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+              {g.subscriptions.slice(0, 3).map((s) => (
+                <span
+                  key={s.id}
+                  className="max-w-[9rem] truncate rounded bg-default-100/80 px-1.5 py-0.5 text-[11px] text-default-600 dark:bg-default-100/50 dark:text-default-400"
+                >
+                  {s.name}
+                </span>
+              ))}
+              {subCount > 3 && (
+                <span className="text-[11px] text-default-400">
+                  +{subCount - 3}
+                </span>
+              )}
+              {groupTraffic > 0 && (
+                <span className="ml-1 shrink-0 tabular-nums text-[11px] text-default-400">
+                  · {formatTraffic(groupTraffic)}
+                </span>
+              )}
+            </div>
+            <button
+              className="inline-flex shrink-0 items-center gap-1 font-medium text-default-600 transition-colors hover:text-foreground"
+              type="button"
+              onClick={onInspectSubs}
+            >
+              <span>
+                {t("{active}/{total} 订阅", {
+                  active: activeSubs,
+                  total: subCount,
+                })}
+              </span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <span className="text-default-400">
+            {t("暂未被订阅引用，点击右上角可快速创建订阅")}
+          </span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** The node groups, displayed as filterable & draggable cards linked to subscriptions. */
 export function NodeGroupList({
   groups,
+  subs,
+  sortable,
   onEdit,
-  onMove,
+  onClone,
+  onReorder,
+  onInspectSubs,
+  onCreateSub,
 }: {
   groups: NodeGroupItem[];
+  subs: SubscriptionItem[];
+  sortable: boolean;
   onEdit: (g: NodeGroupItem) => void;
-  onMove: (index: number, delta: -1 | 1) => void;
+  onClone: (g: NodeGroupItem) => void;
+  onReorder: (ids: number[]) => void;
+  onInspectSubs: (groupId: number) => void;
+  onCreateSub: (groupId: number) => void;
 }) {
+  const { t } = useI18n();
+  const [usageFilter, setUsageFilter] = useState<"all" | "used" | "unused">(
+    "all",
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const subById = useMemo(() => new Map(subs.map((s) => [s.id, s])), [subs]);
+
   if (groups.length === 0) {
     return (
-      <EmptyHint text="节点组把自建、导入的节点和订阅源筛选、改名后存成一份列表，多个订阅可以共用；新建订阅前先建一个" />
+      <EmptyHint
+        text={t(
+          "节点组把自建、导入的节点和订阅源筛选、改名后存成一份列表，多个订阅可以共用；新建订阅前先建一个",
+        )}
+      />
     );
   }
 
+  const usedCount = groups.filter((g) => g.subscriptions.length > 0).length;
+  const unusedCount = groups.length - usedCount;
+  const shown = groups.filter((g) => {
+    if (usageFilter === "used") return g.subscriptions.length > 0;
+    if (usageFilter === "unused") return g.subscriptions.length === 0;
+
+    return true;
+  });
+  const canDrag = sortable && usageFilter === "all" && shown.length > 1;
+
   return (
-    <div className="flex flex-col">
-      {groups.map((g, i) => (
-        <div
-          key={g.id}
-          className="list-row group flex cursor-pointer items-center gap-3 border-b border-divider px-2 py-3 transition-colors hover:bg-default-50"
-          role="button"
-          tabIndex={0}
-          onClick={() => onEdit(g)}
-          onKeyDown={(e) => {
-            if (e.target !== e.currentTarget) return;
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onEdit(g);
-            }
+    <div className="space-y-3">
+      {unusedCount > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          {(
+            [
+              ["all", t("全部"), groups.length],
+              ["used", t("使用中"), usedCount],
+              ["unused", t("未使用"), unusedCount],
+            ] as const
+          ).map(([key, label, count]) => (
+            <button
+              key={key}
+              className={`h-7 rounded-md px-2.5 text-xs font-medium transition-colors ${
+                usageFilter === key
+                  ? "bg-foreground text-background"
+                  : "text-default-500 hover:bg-default-100 hover:text-foreground"
+              }`}
+              type="button"
+              onClick={() => setUsageFilter(key)}
+            >
+              {label}
+              <span className="ml-1 tabular-nums opacity-70">{count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {shown.length === 0 ? (
+        <EmptyHint text={t("没有符合筛选条件的节点组")} />
+      ) : (
+        <DndContext
+          collisionDetection={closestCenter}
+          sensors={sensors}
+          onDragEnd={({ active, over }) => {
+            if (!canDrag || !over || active.id === over.id) return;
+            const ids = shown.map((g) => g.id);
+            const from = ids.indexOf(Number(active.id));
+            const to = ids.indexOf(Number(over.id));
+
+            if (from < 0 || to < 0) return;
+            onReorder(arrayMove(ids, from, to));
           }}
         >
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate">{g.name}</span>
-              {g.subscriptions.length === 0 && (
-                <Chip size="sm" variant="flat">
-                  未使用
-                </Chip>
-              )}
-            </div>
-            <div className="truncate text-xs text-default-400">
-              {g.nodeCount} 个节点 · {groupSourceText(g)}
-              {[filterSummary(g.options), namingSummary(g.options)]
-                .filter(Boolean)
-                .map((x) => ` · ${x}`)
-                .join("")}
-              {g.options.script ? " · 脚本" : ""}
-            </div>
-            {g.subscriptions.length > 0 && (
-              <div className="mt-1 truncate text-xs text-default-400">
-                订阅：{g.subscriptions.map((s) => s.name).join("、")}
-              </div>
-            )}
-          </div>
-          <div
-            className="flex shrink-0 items-center gap-1 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
-            role="presentation"
-            onClick={(e) => e.stopPropagation()}
+          <SortableContext
+            items={shown.map((g) => g.id)}
+            strategy={rectSortingStrategy}
           >
-            <Button
-              isIconOnly
-              aria-label={`上移 ${g.name}`}
-              isDisabled={i === 0}
-              size="sm"
-              variant="light"
-              onPress={() => onMove(i, -1)}
-            >
-              <ArrowUp className="h-4 w-4" />
-            </Button>
-            <Button
-              isIconOnly
-              aria-label={`下移 ${g.name}`}
-              isDisabled={i === groups.length - 1}
-              size="sm"
-              variant="light"
-              onPress={() => onMove(i, 1)}
-            >
-              <ArrowDown className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      ))}
+            <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+              {shown.map((g) => {
+                let traffic = 0;
+                let activeSubs = 0;
+
+                for (const ref of g.subscriptions) {
+                  const s = subById.get(ref.id);
+
+                  if (s) {
+                    traffic += s.uploadBytes + s.downloadBytes;
+                    if (s.active) activeSubs++;
+                  }
+                }
+
+                return (
+                  <SortableNodeGroupCard
+                    key={g.id}
+                    activeSubs={activeSubs}
+                    g={g}
+                    groupTraffic={traffic}
+                    sortable={canDrag}
+                    onClone={() => onClone(g)}
+                    onCreateSub={() => onCreateSub(g.id)}
+                    onEdit={() => onEdit(g)}
+                    onInspectSubs={() => onInspectSubs(g.id)}
+                  />
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
     </div>
   );
 }
@@ -275,6 +541,7 @@ export function NodeGroupEditor({
   onSaved: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [page, setPage] = useState<GroupPage>("source");
   const [preview, setPreview] = useState<NodeGroupPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -422,15 +689,15 @@ export function NodeGroupEditor({
       const res = await saveNodeGroup(draft);
 
       if (res.code !== 0) {
-        toast.error(res.msg || "保存失败");
+        toast.error(res.msg || t("保存失败"));
 
         return;
       }
       if (res.msg && res.msg !== "操作成功") toast(res.msg, { icon: "⚠️" });
-      else toast.success(draft.id ? "已保存" : "已创建");
+      else toast.success(draft.id ? t("已保存") : t("已创建"));
       onSaved();
     } catch {
-      toast.error("保存失败");
+      toast.error(t("保存失败"));
     } finally {
       setSaving(false);
     }
@@ -443,14 +710,14 @@ export function NodeGroupEditor({
       const res = await deleteNodeGroup(draft.id);
 
       if (res.code !== 0) {
-        toast.error(res.msg || "删除失败");
+        toast.error(res.msg || t("删除失败"));
 
         return;
       }
-      toast.success("已删除");
+      toast.success(t("已删除"));
       onSaved();
     } catch {
-      toast.error("删除失败");
+      toast.error(t("删除失败"));
     } finally {
       setSaving(false);
       setConfirmDelete(false);
@@ -492,29 +759,31 @@ export function NodeGroupEditor({
                   <span className="text-sm">{i.name}</span>
                   {nodeRelays.length > 0 && (
                     <span className="ml-1.5 rounded bg-default-100 px-1.5 py-0.5 text-[11px] text-default-500">
-                      落地直连
+                      {t("落地直连")}
                     </span>
                   )}
                   {!i.enabled && (
                     <span className="ml-1 text-xs text-default-400">
-                      已停用
+                      {t("已停用")}
                     </span>
                   )}
                   {usesSharedCredentials(i) && (
-                    <span className="ml-1 text-xs text-warning">共用凭据</span>
+                    <span className="ml-1 text-xs text-warning">
+                      {t("共用凭据")}
+                    </span>
                   )}
                 </Checkbox>
               ) : (
                 <div className="flex items-center gap-1.5 pl-1 text-xs text-default-500">
                   <span>{i.name}</span>
                   <span className="rounded bg-default-100 px-1.5 py-0.5 text-[11px]">
-                    仅中转
+                    {t("仅中转")}
                   </span>
                   {!i.enabled && (
-                    <span className="text-default-400">已停用</span>
+                    <span className="text-default-400">{t("已停用")}</span>
                   )}
                   {usesSharedCredentials(i) && (
-                    <span className="text-warning">共用凭据</span>
+                    <span className="text-warning">{t("共用凭据")}</span>
                   )}
                 </div>
               )}
@@ -533,11 +802,11 @@ export function NodeGroupEditor({
                       >
                         <span className="text-sm">{rel.name}</span>
                         <span className="ml-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">
-                          中转
+                          {t("中转")}
                         </span>
                         {inactive && (
                           <span className="ml-1 text-xs text-default-400">
-                            {rel.forwardExists ? "已暂停" : "转发已删"}
+                            {rel.forwardExists ? t("已暂停") : t("转发已删")}
                           </span>
                         )}
                       </Checkbox>
@@ -560,23 +829,25 @@ export function NodeGroupEditor({
     <>
       <ModalHeader>
         <h2 className="text-lg font-bold">
-          {draft.id ? "编辑节点组" : "新建节点组"}
+          {draft.id ? t("编辑节点组") : t("新建节点组")}
         </h2>
       </ModalHeader>
       <ModalBody className="min-h-[min(65vh,34rem)] space-y-4">
         <div className="sticky top-0 z-10">
           <EditorTabs
             tabs={[
-              { key: "source", label: "来源" },
+              { key: "source", label: t("来源") },
               {
                 key: "process",
-                label: "处理",
+                label: t("处理"),
                 badge:
-                  filterSummary(o) || namingSummary(o) || o.script ? "开" : "",
+                  filterSummary(o) || namingSummary(o) || o.script
+                    ? t("开")
+                    : "",
               },
               {
                 key: "preview",
-                label: "预览",
+                label: t("预览"),
                 badge: preview ? preview.items.length : "",
               },
             ]}
@@ -587,9 +858,9 @@ export function NodeGroupEditor({
 
         {page === "source" && (
           <div className="space-y-4">
-            <Section title="基本">
+            <Section title={t("基本")}>
               <Input
-                label="名称"
+                label={t("名称")}
                 placeholder="例如 香港专线 / 全部自建"
                 value={draft.name}
                 variant="bordered"
@@ -605,15 +876,17 @@ export function NodeGroupEditor({
             <Section
               hint={
                 draft.sourceAll
-                  ? "包含全部自建、导入节点与订阅源，下方可直接选择中转/直连策略"
-                  : "中转线路和落地直连可分别勾选，互不绑定"
+                  ? t(
+                      "包含全部自建、导入节点与订阅源，下方可直接选择中转/直连策略",
+                    )
+                  : t("中转线路和落地直连可分别勾选，互不绑定")
               }
-              title="来源"
+              title={t("来源")}
             >
               <Segmented
                 options={[
-                  ["all", "全部节点"],
-                  ["pick", "指定节点"],
+                  ["all", t("全部节点")],
+                  ["pick", t("指定节点")],
                 ]}
                 value={draft.sourceAll ? "all" : "pick"}
                 onChange={(v) => {
