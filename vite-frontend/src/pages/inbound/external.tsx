@@ -34,8 +34,7 @@ import {
 import { Select, SelectItem } from "@/shadcn-bridge/heroui/select";
 import { Switch } from "@/shadcn-bridge/heroui/switch";
 
-const modalBase =
-  "!w-[calc(100%-32px)] !mx-auto sm:!w-full overflow-hidden";
+const modalBase = "!w-[calc(100%-32px)] !mx-auto sm:!w-full overflow-hidden";
 
 /** Label shown where a panel-managed inbound shows its node or kernel. */
 export const EXTERNAL_LABEL = "导入的节点";
@@ -240,7 +239,7 @@ export function ImportModal({
                 }}
               />
               <Textarea
-                description="支持：分享链接（ss / vmess / vless / trojan / hysteria2 / tuic / anytls / socks5，每行一个）、base64 订阅、Clash / Mihomo 配置、sing-box 配置、Surge / Loon 节点行，或直接填订阅地址（https://...）"
+                description="支持：分享链接（ss / vmess / vless / trojan / hysteria2 / tuic / anytls / mierus / socks5，每行一个）、base64 订阅、Clash / Mihomo 配置、sing-box 配置、Surge / Loon 节点行，或直接填订阅地址（https://...）"
                 label="节点或订阅"
                 minRows={5}
                 placeholder={"vless://...\nss://...\n或 https://订阅地址"}
