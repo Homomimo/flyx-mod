@@ -15,6 +15,7 @@ export const PROTOCOL_LABELS: Record<string, string> = {
   tuic: "TUIC v5",
   anytls: "AnyTLS",
   snell: "Snell",
+  mieru: "Mieru",
   naive: "NaïveProxy",
   socks: "SOCKS5",
   http: "HTTP",
@@ -25,6 +26,19 @@ export const KERNEL_LABELS: Record<string, string> = {
   xray: "Xray",
   singbox: "sing-box",
   snell: "Snell",
+  mieru: "Mieru",
+};
+
+export const MIERU_MUX_LABELS: Record<string, string> = {
+  MULTIPLEXING_OFF: "关闭 (OFF)",
+  MULTIPLEXING_LOW: "低 (LOW，默认)",
+  MULTIPLEXING_MIDDLE: "中 (MIDDLE)",
+  MULTIPLEXING_HIGH: "高 (HIGH)",
+};
+
+export const MIERU_HANDSHAKE_LABELS: Record<string, string> = {
+  HANDSHAKE_STANDARD: "标准 1-RTT（默认）",
+  HANDSHAKE_NO_WAIT: "0-RTT 免等待 (NO_WAIT)",
 };
 
 export const TRANSPORT_LABELS: Record<string, string> = {
@@ -90,6 +104,7 @@ export interface InboundForm {
   snellVersion: string;
   snellMode: string;
   masquerade: string;
+  obfsPassword: string;
   backendPort: number;
   portHopping: string;
   username: string;
@@ -100,6 +115,9 @@ export interface InboundForm {
   wgPeerPrivateKey: string;
   wgPeerAddress: string;
   wgMtu: string;
+  mieruMtu: string;
+  mieruMultiplexing: string;
+  mieruHandshakeMode: string;
   transportType: string;
   path: string;
   host: string;
@@ -116,6 +134,7 @@ export interface InboundForm {
   realityPrivateKey: string;
   realityShortIds: string;
   realityMinClientVer: string;
+  realityXver: string;
   shadowTlsPassword: string;
   acmeEmail: string;
   acmeDns: string;
@@ -124,6 +143,7 @@ export interface InboundForm {
   acmeDnsSet: boolean;
   shareAddressMode: "auto" | "ipv4" | "ipv6" | "custom";
   shareHost: string;
+  sharePort: string;
   remark: string;
   extra: string;
   relayOnly: boolean;
@@ -187,6 +207,15 @@ export const PRESETS: Preset[] = [
     protocol: "vless",
     transport: "xhttp",
     security: "reality",
+  },
+  {
+    key: "vless-xhttp-tls",
+    label: "VLESS + XHTTP + TLS（CDN）",
+    description: "XHTTP + TLS，适合套 Cloudflare 等 CDN 使用",
+    protocol: "vless",
+    transport: "xhttp",
+    security: "tls",
+    needsDomain: true,
   },
   {
     key: "ss2022",
@@ -302,6 +331,25 @@ export const PRESETS: Preset[] = [
     transport: "tcp",
     security: "shadowtls",
   },
+  {
+    key: "mieru-tcp",
+    label: "Mieru (TCP)",
+    description:
+      "高强度加密防探测，无需域名和证书；支持 Mihomo / Stash / Mieru 客户端",
+    kernel: "mieru",
+    protocol: "mieru",
+    transport: "tcp",
+    security: "none",
+  },
+  {
+    key: "mieru-udp",
+    label: "Mieru (UDP)",
+    description: "基于 UDP 的 Mieru，无需域名和证书；弱网/丢包环境下延迟更低",
+    kernel: "mieru",
+    protocol: "mieru",
+    transport: "udp",
+    security: "none",
+  },
 ];
 
 /** Presets the given kernel can serve with its exact transport + security. */
@@ -340,6 +388,7 @@ export function emptyForm(
     snellVersion: "",
     snellMode: "",
     masquerade: "",
+    obfsPassword: "",
     backendPort: 0,
     portHopping: "",
     username: "",
@@ -349,6 +398,9 @@ export function emptyForm(
     wgPeerPrivateKey: "",
     wgPeerAddress: "",
     wgMtu: "",
+    mieruMtu: "",
+    mieruMultiplexing: "MULTIPLEXING_LOW",
+    mieruHandshakeMode: "HANDSHAKE_STANDARD",
     transportType: "tcp",
     path: "",
     host: "",
@@ -365,6 +417,7 @@ export function emptyForm(
     realityPrivateKey: "",
     realityShortIds: "",
     realityMinClientVer: "",
+    realityXver: "0",
     shadowTlsPassword: "",
     acmeEmail: "",
     acmeDns: "",
@@ -373,6 +426,7 @@ export function emptyForm(
     acmeDnsSet: false,
     shareAddressMode: "auto",
     shareHost: "",
+    sharePort: "",
     remark: "",
     extra: "",
     relayOnly: false,
@@ -451,6 +505,7 @@ export function formFromItem(item: InboundApiItem): InboundForm {
       : "",
     snellMode: item.settings.snellMode ?? "",
     masquerade: item.settings.masquerade ?? "",
+    obfsPassword: item.settings.obfsPassword ?? "",
     backendPort: item.settings.backendPort ?? 0,
     portHopping: item.settings.portHopping ?? "",
     username: item.settings.username ?? "",
@@ -459,7 +514,17 @@ export function formFromItem(item: InboundApiItem): InboundForm {
     wgPrivateKey: item.settings.privateKey ?? "",
     wgPeerPrivateKey: item.settings.peerPrivateKey ?? "",
     wgPeerAddress: item.settings.peerAddress ?? "",
-    wgMtu: item.settings.mtu ? String(item.settings.mtu) : "",
+    wgMtu:
+      item.protocol === "wireguard" && item.settings.mtu
+        ? String(item.settings.mtu)
+        : "",
+    mieruMtu:
+      item.protocol === "mieru" && item.settings.mtu
+        ? String(item.settings.mtu)
+        : "",
+    mieruMultiplexing: item.settings.mieruMultiplexing || "MULTIPLEXING_LOW",
+    mieruHandshakeMode:
+      item.settings.mieruHandshakeMode || "HANDSHAKE_STANDARD",
     transportType: item.transport.type || "tcp",
     path: item.transport.path ?? "",
     host: item.transport.host ?? "",
@@ -476,6 +541,7 @@ export function formFromItem(item: InboundApiItem): InboundForm {
     realityPrivateKey: item.security.realityPrivateKey ?? "",
     realityShortIds: (item.security.realityShortIds ?? []).join(","),
     realityMinClientVer: item.security.realityMinClientVer ?? "",
+    realityXver: String(item.security.realityXver ?? 0),
     shadowTlsPassword: item.security.shadowTlsPassword ?? "",
     acmeEmail: item.security.acmeEmail ?? "",
     acmeDns: item.security.acmeDns ?? "",
@@ -485,6 +551,7 @@ export function formFromItem(item: InboundApiItem): InboundForm {
     shareAddressMode:
       item.shareAddressMode ?? (item.shareHost ? "custom" : "auto"),
     shareHost: item.shareHost,
+    sharePort: item.sharePort ? String(item.sharePort) : "",
     remark: item.remark,
     extra: item.extra,
     relayOnly: item.relayOnly,
@@ -531,13 +598,14 @@ export const passwordProtocols = [
   "tuic",
   "anytls",
   "snell",
+  "mieru",
   "naive",
   "socks",
   "http",
 ];
 
 /** Protocols with a username next to the password. */
-export const usernameProtocols = ["naive", "socks", "http"];
+export const usernameProtocols = ["mieru", "naive", "socks", "http"];
 
 /** TLS on these protocols defaults its SNI server-side, so it is optional. */
 export const sniOptionalProtocols = ["hysteria2", "tuic", "anytls"];
@@ -608,6 +676,10 @@ export function toPayload(form: InboundForm): InboundMutationPayload {
           : undefined,
       masquerade:
         form.protocol === "hysteria2" ? form.masquerade.trim() : undefined,
+      obfsPassword:
+        form.protocol === "hysteria2"
+          ? form.obfsPassword.trim() || undefined
+          : undefined,
       backendPort: form.backendPort || undefined,
       portHopping:
         form.protocol === "hysteria2"
@@ -635,6 +707,16 @@ export function toPayload(form: InboundForm): InboundMutationPayload {
       mtu:
         form.protocol === "wireguard" && form.wgMtu.trim()
           ? Number(form.wgMtu)
+          : form.protocol === "mieru" && form.mieruMtu.trim()
+            ? Number(form.mieruMtu)
+            : undefined,
+      mieruMultiplexing:
+        form.protocol === "mieru"
+          ? form.mieruMultiplexing || undefined
+          : undefined,
+      mieruHandshakeMode:
+        form.protocol === "mieru"
+          ? form.mieruHandshakeMode || undefined
           : undefined,
     },
     transport: {
@@ -661,6 +743,10 @@ export function toPayload(form: InboundForm): InboundMutationPayload {
         form.securityType === "reality"
           ? form.realityMinClientVer.trim() || undefined
           : undefined,
+      realityXver:
+        form.securityType === "reality" && form.kernelType === "xray"
+          ? Number(form.realityXver) || 0
+          : undefined,
       shadowTlsPassword:
         form.securityType === "shadowtls"
           ? form.shadowTlsPassword.trim() || undefined
@@ -678,6 +764,7 @@ export function toPayload(form: InboundForm): InboundMutationPayload {
     extra: form.extra.trim(),
     shareAddressMode: form.shareAddressMode,
     shareHost: form.shareAddressMode === "custom" ? form.shareHost.trim() : "",
+    sharePort: form.sharePort.trim() ? Number(form.sharePort) : 0,
     remark: form.remark.trim(),
     relayOnly: form.relayOnly || form.acceptProxyProtocol,
     acceptProxyProtocol: form.acceptProxyProtocol,
@@ -735,6 +822,9 @@ export function describeInbound(item: InboundApiItem): string {
   }
   if (item.security.certMode === "acme") {
     parts.push("ACME");
+  }
+  if (item.settings.obfsPassword) {
+    parts.push("Salamander");
   }
   if (item.settings.portHopping) {
     parts.push("端口跳跃");

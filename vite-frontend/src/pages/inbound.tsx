@@ -182,6 +182,13 @@ function detailRows(item: InboundApiItem): Array<[string, string]> {
     ["端口", String(item.port)],
     ["协议", describeInbound(item)],
   ];
+
+  if (item.sharePort && item.sharePort !== item.port) {
+    rows.push(["分享端口", String(item.sharePort)]);
+  }
+  if (item.muxPort) {
+    rows.push(["端口复用", `SNI 分流 → 127.0.0.1:${item.muxPort}`]);
+  }
   const s = item.settings;
   const t = item.transport;
   const sec = item.security;
@@ -194,7 +201,13 @@ function detailRows(item: InboundApiItem): Array<[string, string]> {
     rows.push([item.protocol === "snell" ? "PSK" : "密码", s.password]);
   if (s.snellVersion) rows.push(["Snell 版本", `v${s.snellVersion}`]);
   if (s.snellMode) rows.push(["流量整形", s.snellMode]);
+  if (item.protocol === "mieru") {
+    if (s.mtu) rows.push(["MTU", String(s.mtu)]);
+    if (s.mieruMultiplexing) rows.push(["多路复用", s.mieruMultiplexing]);
+    if (s.mieruHandshakeMode) rows.push(["握手模式", s.mieruHandshakeMode]);
+  }
   if (s.masquerade) rows.push(["伪装网站", s.masquerade]);
+  if (s.obfsPassword) rows.push(["Salamander 混淆密码", s.obfsPassword]);
   if (s.portHopping) rows.push(["端口跳跃", `${s.portHopping}（UDP）`]);
   if (t.path) rows.push(["路径", t.path]);
   if (t.host) rows.push(["Host", t.host]);
@@ -1625,7 +1638,8 @@ export default function InboundPage() {
                     color: "secondary" as const,
                     onPress: () => setRelaying(sheetItem),
                   },
-                  ...(sheetItem.kernelType === "snell"
+                  ...(sheetItem.kernelType === "snell" ||
+                  sheetItem.kernelType === "mieru"
                     ? []
                     : [
                         {

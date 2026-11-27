@@ -15,7 +15,7 @@ on:
         description: '版本号（如 3.0.0，不带 v）'
         required: true
         type: string
-        default: '3.10.3.1'
+        default: '3.11.0.1'
 
 jobs:
   check-version:

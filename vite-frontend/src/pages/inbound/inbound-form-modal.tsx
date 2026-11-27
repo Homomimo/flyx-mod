@@ -12,6 +12,8 @@ import toast from "react-hot-toast";
 import {
   ACME_DNS_LABELS,
   CERT_MODE_LABELS,
+  MIERU_HANDSHAKE_LABELS,
+  MIERU_MUX_LABELS,
   PROTOCOL_LABELS,
   SECURITY_LABELS,
   TRANSPORT_LABELS,
@@ -172,7 +174,9 @@ export function InboundFormModal({
         kernelType,
         ssSubscriptionUsers: kernelType === "xray" && prev.ssSubscriptionUsers,
         outboundIpStrategy:
-          kernelType === "xray" || kernelType === "singbox"
+          kernelType === "xray" ||
+          kernelType === "singbox" ||
+          kernelType === "mieru"
             ? prev.outboundIpStrategy
             : "auto",
       };
@@ -263,6 +267,13 @@ export function InboundFormModal({
         return "端口必须在 1-65535 之间";
       }
     }
+    if (form.sharePort.trim()) {
+      const sp = Number(form.sharePort);
+
+      if (!Number.isInteger(sp) || sp < 1 || sp > 65535) {
+        return "分享端口必须在 1-65535 之间";
+      }
+    }
     if (
       form.securityType === "tls" &&
       !form.sni.trim() &&
@@ -295,6 +306,20 @@ export function InboundFormModal({
         Number(m[1]) >= Number(m[2])
       ) {
         return "端口跳跃格式为 起始-结束（1024-65535），例如 20000-30000";
+      }
+    }
+    if (form.protocol === "hysteria2" && form.obfsPassword.trim()) {
+      const pw = form.obfsPassword.trim();
+
+      if (pw.length > 128 || /[\s,"]/.test(pw)) {
+        return "Salamander 混淆密码不能包含空白、逗号或引号，且长度不超过 128";
+      }
+    }
+    if (form.protocol === "mieru" && form.mieruMtu.trim()) {
+      const mtu = Number(form.mieruMtu);
+
+      if (!Number.isInteger(mtu) || mtu < 1280 || mtu > 1500) {
+        return "Mieru MTU 应在 1280-1500 之间";
       }
     }
     if (form.securityType === "tls" && certMode === "file") {
@@ -769,8 +794,8 @@ export function InboundFormModal({
                           </p>
                           <p className="text-xs text-default-500">
                             不用证书也能防探测，密钥自动生成。客户端需要 Xray
-                            25.9+（v2rayN 等）或 Mihomo；sing-box、Surge
-                            等客户端的订阅里会略过它
+                            25.9+（v2rayN 等）、Mihomo 或 Surge
+                            6+；sing-box、Loon 等客户端的订阅里会略过它
                           </p>
                         </div>
                       </div>
@@ -927,6 +952,74 @@ export function InboundFormModal({
                         </p>
                       </div>
                     )}
+                    {form.protocol === "mieru" && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <Input
+                            description="范围 1280-1500（仅 UDP 生效）"
+                            label="MTU"
+                            placeholder="1400"
+                            type="number"
+                            value={form.mieruMtu}
+                            variant="bordered"
+                            onChange={(e) => set("mieruMtu", e.target.value)}
+                          />
+                          <Select
+                            description="写入分享链接与 Clash 配置"
+                            label="多路复用"
+                            selectedKeys={[
+                              form.mieruMultiplexing || "MULTIPLEXING_LOW",
+                            ]}
+                            onSelectionChange={(keys) =>
+                              set(
+                                "mieruMultiplexing",
+                                String(
+                                  Array.from(keys)[0] ?? "MULTIPLEXING_LOW",
+                                ),
+                              )
+                            }
+                          >
+                            {Object.entries(MIERU_MUX_LABELS).map(
+                              ([k, label]) => (
+                                <SelectItem key={k} textValue={label}>
+                                  {label}
+                                </SelectItem>
+                              ),
+                            )}
+                          </Select>
+                          <Select
+                            description="客户端握手模式"
+                            label="握手模式"
+                            selectedKeys={[
+                              form.mieruHandshakeMode || "HANDSHAKE_STANDARD",
+                            ]}
+                            onSelectionChange={(keys) =>
+                              set(
+                                "mieruHandshakeMode",
+                                String(
+                                  Array.from(keys)[0] ?? "HANDSHAKE_STANDARD",
+                                ),
+                              )
+                            }
+                          >
+                            {Object.entries(MIERU_HANDSHAKE_LABELS).map(
+                              ([k, label]) => (
+                                <SelectItem key={k} textValue={label}>
+                                  {label}
+                                </SelectItem>
+                              ),
+                            )}
+                          </Select>
+                        </div>
+                        <p className="text-xs text-default-500">
+                          无需域名与证书；支持 Mihomo / Stash / Mieru
+                          官方客户端（mierus://），sing-box / Surge /
+                          Shadowrocket / Loon
+                          订阅会自动跳过。服务端与客户端系统时钟误差需在 1
+                          分钟内。
+                        </p>
+                      </div>
+                    )}
                     {form.protocol === "hysteria2" && (
                       <Input
                         description="非客户端访问时返回此网站内容，留空不伪装"
@@ -935,6 +1028,38 @@ export function InboundFormModal({
                         value={form.masquerade}
                         variant="bordered"
                         onChange={(e) => set("masquerade", e.target.value)}
+                      />
+                    )}
+                    {form.protocol === "hysteria2" && (
+                      <Input
+                        description="留空不启用；启用后流量经 Salamander 混淆，需客户端支持（启用后上方网页伪装将失效）"
+                        endContent={
+                          <button
+                            className="whitespace-nowrap text-xs text-primary hover:underline"
+                            type="button"
+                            onClick={() => {
+                              const chars =
+                                "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+                              const bytes = new Uint8Array(16);
+
+                              crypto.getRandomValues(bytes);
+                              set(
+                                "obfsPassword",
+                                Array.from(
+                                  bytes,
+                                  (b) => chars[b % chars.length],
+                                ).join(""),
+                              );
+                            }}
+                          >
+                            随机生成
+                          </button>
+                        }
+                        label="Salamander 混淆密码（可选）"
+                        placeholder="留空不启用"
+                        value={form.obfsPassword}
+                        variant="bordered"
+                        onChange={(e) => set("obfsPassword", e.target.value)}
                       />
                     )}
                     {form.protocol === "hysteria2" && (
@@ -1035,16 +1160,39 @@ export function InboundFormModal({
                           />
                         </div>
                         {form.kernelType === "xray" && (
-                          <Input
-                            description="低于此版本的客户端会被拒绝。Xray 新版默认 26.3.27，会导致 Clash / Mihomo 等客户端连不上，保持 1.0.0 即可兼容所有客户端"
-                            label="最低客户端版本"
-                            placeholder="1.0.0"
-                            value={form.realityMinClientVer}
-                            variant="bordered"
-                            onChange={(e) =>
-                              set("realityMinClientVer", e.target.value)
-                            }
-                          />
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <Input
+                              description="低于此版本的客户端会被拒绝。保持 1.0.0 即可兼容 Mihomo / Clash 等客户端"
+                              label="最低客户端版本"
+                              placeholder="1.0.0"
+                              value={form.realityMinClientVer}
+                              variant="bordered"
+                              onChange={(e) =>
+                                set("realityMinClientVer", e.target.value)
+                              }
+                            />
+                            <Select
+                              description="向本机回落目标（如 Caddy/Nginx）发送 PROXY protocol 头版本，普通伪装保持 0"
+                              label="回落 PROXY protocol (xver)"
+                              selectedKeys={[form.realityXver || "0"]}
+                              onSelectionChange={(keys) =>
+                                set(
+                                  "realityXver",
+                                  String(Array.from(keys)[0] ?? "0"),
+                                )
+                              }
+                            >
+                              <SelectItem key="0" textValue="0（关闭，默认）">
+                                0（关闭，默认）
+                              </SelectItem>
+                              <SelectItem key="1" textValue="1（PROXY v1）">
+                                1（PROXY v1）
+                              </SelectItem>
+                              <SelectItem key="2" textValue="2（PROXY v2）">
+                                2（PROXY v2）
+                              </SelectItem>
+                            </Select>
+                          </div>
                         )}
                       </div>
                     )}
@@ -1075,13 +1223,29 @@ export function InboundFormModal({
 
                     <div className="space-y-3 border-t border-divider pt-4">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Input
-                          description="默认 :: 监听所有地址；127.0.0.1 仅本机（配合隧道中转）"
-                          label="监听地址"
-                          value={form.listen}
-                          variant="bordered"
-                          onChange={(e) => set("listen", e.target.value)}
-                        />
+                        <div className="space-y-3">
+                          <Input
+                            description="默认 :: 监听所有地址；127.0.0.1 仅本机（配合隧道中转或外部反代）"
+                            label="监听地址"
+                            value={form.listen}
+                            variant="bordered"
+                            onChange={(e) => set("listen", e.target.value)}
+                          />
+                          <Input
+                            description="留空则与监听端口一致；配合外部 443 反代/CDN 时可填 443"
+                            inputMode="numeric"
+                            label="分享端口（可选）"
+                            placeholder={form.port || "与监听端口一致"}
+                            value={form.sharePort}
+                            variant="bordered"
+                            onChange={(e) =>
+                              set(
+                                "sharePort",
+                                e.target.value.replace(/[^\d]/g, ""),
+                              )
+                            }
+                          />
+                        </div>
                         <div className="space-y-2">
                           <Select
                             disabledKeys={[
