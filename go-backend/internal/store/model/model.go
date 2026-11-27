@@ -599,16 +599,21 @@ type SubscriptionBackup struct {
 	Enabled     int    `json:"enabled"`
 	Remark      string `json:"remark"`
 	Pinned      int    `json:"pinned,omitempty"`
+	GroupName   string `json:"group,omitempty"`
 	Tags        string `json:"tags,omitempty"`
 	Inx         int    `json:"inx"`
 	CreatedTime int64  `json:"createdTime"`
 	// Traffic (share subscriptions).
-	UploadBytes      int64 `json:"uploadBytes,omitempty"`
-	DownloadBytes    int64 `json:"downloadBytes,omitempty"`
-	TrafficLimit     int64 `json:"trafficLimit,omitempty"`
-	ResetDay         int   `json:"resetDay,omitempty"`
-	TrafficResetTime int64 `json:"trafficResetTime,omitempty"`
-	TrafficSince     int64 `json:"trafficSince,omitempty"`
+	UploadBytes      int64  `json:"uploadBytes,omitempty"`
+	DownloadBytes    int64  `json:"downloadBytes,omitempty"`
+	TrafficLimit     int64  `json:"trafficLimit,omitempty"`
+	ResetDay         int    `json:"resetDay,omitempty"`
+	TrafficResetTime int64  `json:"trafficResetTime,omitempty"`
+	TrafficSince     int64  `json:"trafficSince,omitempty"`
+	MaxOnlineIPs     int    `json:"maxOnlineIps,omitempty"`
+	IPAction         string `json:"ipAction,omitempty"`
+	IPSuspendMinutes int    `json:"ipSuspendMinutes,omitempty"`
+	MaxPullIPs       int    `json:"maxPullIps,omitempty"`
 	// UserID is the panel user it is assigned to.
 	UserID int64 `json:"userId,omitempty"`
 }
