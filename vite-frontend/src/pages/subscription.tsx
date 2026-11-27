@@ -10,6 +10,7 @@ import type {
   SubRuleGroup,
   SubscriptionBatchAction,
   SubscriptionDraft,
+  SubscriptionIPAction,
   SubscriptionItem,
 } from "@/api";
 import type { InboundApiItem } from "@/api/types";
@@ -21,6 +22,7 @@ import {
   ArrowUp,
   Copy,
   CopyPlus,
+  Folder,
   GripVertical,
   LayoutTemplate,
   QrCode,
@@ -112,6 +114,7 @@ import {
   groupDraftFrom,
   groupSourceText,
 } from "@/pages/subscription/node-groups";
+import { SubIPActivity } from "@/pages/subscription/ip-activity";
 import {
   SubBatchBar,
   SubFilterBar,
@@ -121,6 +124,7 @@ import {
   SubUsageBar,
   TagEditorInput,
   isExpiringSoon,
+  isIPSuspended,
   isSubIssue,
   usagePercent,
   type SubSortBy,
@@ -250,6 +254,12 @@ interface Draft extends SubscriptionDraft {
   expire: string;
   /** Traffic limit typed in GB ("" = unlimited). */
   limitGB: string;
+  /** Max concurrent online IPs typed as text ("" = unlimited). */
+  maxOnlineText: string;
+  /** Temporary suspend duration in minutes typed as text. */
+  ipSuspendMinutesText: string;
+  /** Max distinct 24h pull IPs typed as text ("" = unlimited). */
+  maxPullText: string;
 }
 
 const GB = 1024 ** 3;
@@ -291,10 +301,18 @@ function draftFrom(
       enabled: true,
       remark: "",
       pinned: false,
+      group: "",
       tags: [],
       trafficLimit: 0,
       limitGB: "",
       resetDay: 0,
+      maxOnlineIps: 0,
+      maxOnlineText: "",
+      ipAction: "alert",
+      ipSuspendMinutes: 10,
+      ipSuspendMinutesText: "10",
+      maxPullIps: 0,
+      maxPullText: "",
     };
   }
 
@@ -309,10 +327,18 @@ function draftFrom(
     enabled: s.enabled,
     remark: s.remark,
     pinned: Boolean(s.pinned),
+    group: s.group ?? "",
     tags: s.tags ?? [],
     trafficLimit: s.trafficLimit,
     limitGB: gbText(s.trafficLimit),
     resetDay: s.resetDay,
+    maxOnlineIps: s.maxOnlineIps ?? 0,
+    maxOnlineText: s.maxOnlineIps ? String(s.maxOnlineIps) : "",
+    ipAction: s.ipAction ?? "alert",
+    ipSuspendMinutes: s.ipSuspendMinutes || 10,
+    ipSuspendMinutesText: String(s.ipSuspendMinutes || 10),
+    maxPullIps: s.maxPullIps ?? 0,
+    maxPullText: s.maxPullIps ? String(s.maxPullIps) : "",
   };
 }
 
@@ -323,6 +349,16 @@ function draftForGroup(
   return {
     ...draftFrom(undefined, sources),
     groupIds: [groupId],
+  };
+}
+
+function draftForSubGroup(
+  group: string,
+  sources: RemoteSourceItem[] = [],
+): Draft {
+  return {
+    ...draftFrom(undefined, sources),
+    group,
   };
 }
 
@@ -340,8 +376,18 @@ function cloneDraftFrom(s: SubscriptionItem): Draft {
 
 /** The API payload: the backend rejects unknown fields like `expire`. */
 function toPayload(d: Draft): SubscriptionDraft {
-  const { expire, limitGB, ...rest } = d;
+  const {
+    expire,
+    limitGB,
+    maxOnlineText,
+    ipSuspendMinutesText,
+    maxPullText,
+    ...rest
+  } = d;
   const gb = Number(limitGB);
+  const maxOnline = Number.parseInt(maxOnlineText, 10);
+  const suspendMins = Number.parseInt(ipSuspendMinutesText, 10);
+  const maxPull = Number.parseInt(maxPullText, 10);
 
   return {
     ...rest,
@@ -349,6 +395,17 @@ function toPayload(d: Draft): SubscriptionDraft {
     expireTime: fromDateInput(expire),
     trafficLimit: gb > 0 ? Math.round(gb * GB) : 0,
     resetDay: d.resetDay,
+    maxOnlineIps:
+      Number.isFinite(maxOnline) && maxOnline > 0
+        ? Math.min(1000, maxOnline)
+        : 0,
+    ipAction: d.ipAction ?? "alert",
+    ipSuspendMinutes:
+      Number.isFinite(suspendMins) && suspendMins > 0
+        ? Math.min(10080, suspendMins)
+        : 10,
+    maxPullIps:
+      Number.isFinite(maxPull) && maxPull > 0 ? Math.min(1000, maxPull) : 0,
   };
 }
 
@@ -359,6 +416,7 @@ function Editor({
   sources,
   ruleGroups,
   templates,
+  groupSuggestions,
   tagSuggestions,
   saving,
   onSave,
@@ -370,11 +428,13 @@ function Editor({
   sources: RemoteSourceItem[];
   ruleGroups: SubRuleGroup[];
   templates: SubTemplate[];
+  groupSuggestions: string[];
   tagSuggestions: string[];
   saving: boolean;
   onSave: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [preview, setPreview] = useState<SubPreview | null>(null);
   const [previewKind, setPreviewKind] = useState<SubTemplateSlot | null>(null);
   // Nodes to pick the chain from; loaded when the chain page opens and kept
@@ -679,6 +739,171 @@ function Editor({
                 </p>
               </div>
             </Section>
+            <Section
+              collapsible
+              defaultOpen={Boolean(draft.maxOnlineText || draft.maxPullText)}
+              summary={
+                [
+                  Number(draft.maxOnlineText) > 0
+                    ? t("在线 {n} IP", { n: Number(draft.maxOnlineText) })
+                    : "",
+                  Number(draft.maxOnlineText) > 0
+                    ? draft.ipAction === "suspend"
+                      ? t("暂停 {n} 分钟", {
+                          n: Number(draft.ipSuspendMinutesText) || 10,
+                        })
+                      : draft.ipAction === "disable"
+                        ? t("自动停用")
+                        : t("仅告警")
+                    : "",
+                  Number(draft.maxPullText) > 0
+                    ? t("24h 拉取 {n} IP", { n: Number(draft.maxPullText) })
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || t("不限")
+              }
+              title={t("IP 限制与防分享")}
+            >
+              <div className="space-y-1">
+                <label className="text-sm font-medium" htmlFor="sub-max-ip">
+                  {t("同时在线 IP 上限")}
+                </label>
+                <QuickPickRow
+                  picks={[
+                    ...[2, 3, 5].map((n) => ({
+                      label: `${n} IP`,
+                      onPick: () => set({ maxOnlineText: String(n) }),
+                    })),
+                    {
+                      label: t("不限"),
+                      onPick: () => set({ maxOnlineText: "" }),
+                    },
+                  ]}
+                >
+                  <input
+                    className="block h-10 w-full rounded-lg border border-divider bg-background px-2 pr-9 text-sm"
+                    id="sub-max-ip"
+                    inputMode="numeric"
+                    placeholder={t("不限")}
+                    value={draft.maxOnlineText}
+                    onChange={(e) =>
+                      set({
+                        maxOnlineText: e.target.value.replace(/[^\d]/g, ""),
+                      })
+                    }
+                  />
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-default-500">
+                    IP
+                  </span>
+                </QuickPickRow>
+                <p className="text-xs text-default-500">
+                  {t(
+                    "跨所有服务器合并统计（IPv6 按 /64 合并），连续 2 个采集周期超限后触发处理，避免切换网络误杀",
+                  )}
+                </p>
+              </div>
+
+              {Number(draft.maxOnlineText) > 0 && (
+                <div className="space-y-2.5 rounded-lg border border-divider/80 bg-default-50/40 p-3 dark:bg-default-100/15">
+                  <div className="space-y-1">
+                    <span className="text-xs font-medium text-foreground">
+                      {t("超限处理动作")}
+                    </span>
+                    <Segmented<SubscriptionIPAction>
+                      options={[
+                        ["alert", t("仅告警")],
+                        ["suspend", t("临时暂停")],
+                        ["disable", t("自动停用")],
+                      ]}
+                      value={draft.ipAction ?? "alert"}
+                      onChange={(ipAction) => set({ ipAction })}
+                    />
+                  </div>
+                  {(draft.ipAction ?? "alert") === "suspend" && (
+                    <div className="space-y-1">
+                      <label
+                        className="text-xs font-medium text-foreground"
+                        htmlFor="sub-suspend-min"
+                      >
+                        {t("暂停时长（分钟）")}
+                      </label>
+                      <QuickPickRow
+                        picks={[5, 10, 30, 60].map((m) => ({
+                          label: t("{n} 分", { n: m }),
+                          onPick: () =>
+                            set({ ipSuspendMinutesText: String(m) }),
+                        }))}
+                      >
+                        <input
+                          className="block h-9 w-full rounded-lg border border-divider bg-background px-2 pr-10 text-sm"
+                          id="sub-suspend-min"
+                          inputMode="numeric"
+                          placeholder="10"
+                          value={draft.ipSuspendMinutesText}
+                          onChange={(e) =>
+                            set({
+                              ipSuspendMinutesText: e.target.value.replace(
+                                /[^\d]/g,
+                                "",
+                              ),
+                            })
+                          }
+                        />
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-default-500">
+                          {t("分钟")}
+                        </span>
+                      </QuickPickRow>
+                      <p className="text-[11px] text-default-500">
+                        {t(
+                          "暂停期间从节点撤回凭据，到期自动恢复，也可手动立即恢复",
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <label
+                  className="text-sm font-medium"
+                  htmlFor="sub-max-pull-ip"
+                >
+                  {t("24 小时拉取 IP 上限")}
+                </label>
+                <QuickPickRow
+                  picks={[
+                    ...[3, 5, 10].map((n) => ({
+                      label: `${n} IP`,
+                      onPick: () => set({ maxPullText: String(n) }),
+                    })),
+                    {
+                      label: t("不限"),
+                      onPick: () => set({ maxPullText: "" }),
+                    },
+                  ]}
+                >
+                  <input
+                    className="block h-10 w-full rounded-lg border border-divider bg-background px-2 pr-9 text-sm"
+                    id="sub-max-pull-ip"
+                    inputMode="numeric"
+                    placeholder={t("不限")}
+                    value={draft.maxPullText}
+                    onChange={(e) =>
+                      set({ maxPullText: e.target.value.replace(/[^\d]/g, "") })
+                    }
+                  />
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-default-500">
+                    IP
+                  </span>
+                </QuickPickRow>
+                <p className="text-xs text-default-500">
+                  {t(
+                    "限制 24 小时内从不同 IP 拉取订阅链接的次数，超限时新 IP 将收到拦截提示节点（不影响已拉取 IP）",
+                  )}
+                </p>
+              </div>
+            </Section>
             <Input
               label="备注"
               placeholder="可选"
@@ -686,6 +911,39 @@ function Editor({
               variant="bordered"
               onChange={(e) => set({ remark: e.target.value })}
             />
+            <div className="space-y-1.5">
+              <Input
+                label="订阅分组"
+                maxLength={50}
+                placeholder="如：自用、拼车、家庭（留空归入未分组）"
+                value={draft.group ?? ""}
+                variant="bordered"
+                onChange={(e) => set({ group: e.target.value })}
+              />
+              {groupSuggestions.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {groupSuggestions.map((g) => {
+                    const active = (draft.group ?? "").trim() === g;
+
+                    return (
+                      <button
+                        key={g}
+                        className={`inline-flex h-6 items-center gap-1 rounded-md border px-2 text-xs transition-colors ${
+                          active
+                            ? "border-foreground bg-foreground text-background dark:border-default-300 dark:bg-default-200 dark:text-foreground"
+                            : "border-divider bg-default-50 text-default-600 hover:bg-default-100"
+                        }`}
+                        type="button"
+                        onClick={() => set({ group: active ? "" : g })}
+                      >
+                        <Folder className="h-3 w-3 opacity-70" />
+                        {g}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-foreground">分类标签</p>
               <TagEditorInput
@@ -1411,12 +1669,16 @@ export default function SubscriptionPage() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchTagModal, setBatchTagModal] = useState(false);
   const [batchTagInput, setBatchTagInput] = useState<string[]>([]);
+  const [batchGroupModal, setBatchGroupModal] = useState(false);
+  const [batchGroupInput, setBatchGroupInput] = useState("");
   const [pinningId, setPinningId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const detail = subs.find((item) => item.id === detailId) ?? null;
-  const [detailTab, setDetailTab] = useState<"import" | "traffic">("import");
+  const [detailTab, setDetailTab] = useState<"import" | "traffic" | "ip">(
+    "import",
+  );
   // The subscription whose QR code is open in the detail dialog.
   const [qrFor, setQrFor] = useState<number | null>(null);
 
@@ -1529,7 +1791,10 @@ export default function SubscriptionPage() {
               ...item,
               active: updated.active,
               downloadBytes: updated.downloadBytes,
+              ipSuspendedUntil: updated.ipSuspendedUntil,
+              onlineIpCount: updated.onlineIpCount,
               overQuota: updated.overQuota,
+              pullIpCount24h: updated.pullIpCount24h,
               trafficSince: updated.trafficSince,
               uploadBytes: updated.uploadBytes,
             };
@@ -1614,13 +1879,14 @@ export default function SubscriptionPage() {
     action: SubscriptionBatchAction,
     days?: number,
     tags?: string[],
+    group?: string,
   ) => {
     const ids = Array.from(selectedIds);
 
     if (ids.length === 0) return;
     setBatchBusy(true);
     try {
-      const res = await batchSubscriptions({ ids, action, days, tags });
+      const res = await batchSubscriptions({ ids, action, days, tags, group });
 
       if (res.code !== 0) {
         toast.error(res.msg || tr("操作失败"));
@@ -1630,11 +1896,13 @@ export default function SubscriptionPage() {
       const msgMap: Record<SubscriptionBatchAction, string> = {
         enable: tr("已启用 {count} 个订阅", { count: ids.length }),
         disable: tr("已停用 {count} 个订阅", { count: ids.length }),
+        unsuspend: tr("已解除 {count} 个订阅的 IP 暂停", { count: ids.length }),
         "reset-traffic": tr("已重置 {count} 个订阅流量", { count: ids.length }),
         "extend-days": tr("已为 {count} 个订阅续期 {days} 天", {
           count: ids.length,
           days: days ?? 0,
         }),
+        "set-group": tr("已更新 {count} 个订阅的分组", { count: ids.length }),
         "add-tag": tr("已为 {count} 个订阅添加标签", { count: ids.length }),
         "set-tags": tr("已更新 {count} 个订阅标签", { count: ids.length }),
         "remove-tag": tr("已移除标签"),
@@ -1750,6 +2018,21 @@ export default function SubscriptionPage() {
 
   const tagSuggestions = useMemo(() => allTags.map(([tag]) => tag), [allTags]);
 
+  // Collect all custom subscription groups across subscriptions, sorted by frequency.
+  const subGroupSuggestions = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const s of subs) {
+      const g = (s.group ?? "").trim();
+
+      if (g) map.set(g, (map.get(g) ?? 0) + 1);
+    }
+
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
+      .map(([name]) => name);
+  }, [subs]);
+
   const sourceText = useCallback(
     (s: SubscriptionItem) =>
       (s.groupIds ?? [])
@@ -1780,6 +2063,7 @@ export default function SubscriptionPage() {
       if (q) {
         const haystack = [
           s.name,
+          s.group ?? "",
           s.remark,
           s.userName ?? "",
           ...(s.tags ?? []),
@@ -1853,12 +2137,12 @@ export default function SubscriptionPage() {
     });
   }, [groups, q]);
 
-  // Group subscriptions by primary node group (with Pinned section on top).
+  // Group subscriptions by their own custom group name (with Pinned section on top).
   const groupedSections = useMemo(() => {
     const sections: Array<{
       key: string;
       title: string;
-      groupId?: number;
+      subGroup?: string;
       pinned?: boolean;
       items: SubscriptionItem[];
     }> = [];
@@ -1879,30 +2163,34 @@ export default function SubscriptionPage() {
       });
     }
 
-    const byGroup = new Map<number, SubscriptionItem[]>();
+    const bySubGroup = new Map<string, SubscriptionItem[]>();
     const ungrouped: SubscriptionItem[] = [];
 
     for (const s of rest) {
-      const primaryId = groupFilter > 0 ? groupFilter : (s.groupIds?.[0] ?? 0);
+      const name = (s.group ?? "").trim();
 
-      if (primaryId > 0 && groupName.has(primaryId)) {
-        const bucket = byGroup.get(primaryId) ?? [];
+      if (name) {
+        const bucket = bySubGroup.get(name) ?? [];
 
         bucket.push(s);
-        byGroup.set(primaryId, bucket);
+        bySubGroup.set(name, bucket);
       } else {
         ungrouped.push(s);
       }
     }
 
-    for (const g of groups) {
-      const items = byGroup.get(g.id);
+    const sortedNames = Array.from(bySubGroup.keys()).sort((a, b) =>
+      a.localeCompare(b, "zh-CN"),
+    );
+
+    for (const name of sortedNames) {
+      const items = bySubGroup.get(name);
 
       if (items?.length) {
         sections.push({
-          key: `g-${g.id}`,
-          title: g.name,
-          groupId: g.id,
+          key: `sg-${name}`,
+          title: name,
+          subGroup: name,
           items,
         });
       }
@@ -1910,14 +2198,14 @@ export default function SubscriptionPage() {
 
     if (ungrouped.length > 0) {
       sections.push({
-        key: "__none__",
-        title: tr("未选节点组"),
+        key: "__ungrouped__",
+        title: tr("未分组"),
         items: ungrouped,
       });
     }
 
     return sections;
-  }, [shownSubs, groups, groupName, groupFilter, tagFilter, tr]);
+  }, [shownSubs, groupFilter, tagFilter, tr]);
 
   if (loading) return <PageLoadingState message={tr("正在加载...")} />;
 
@@ -1957,7 +2245,11 @@ export default function SubscriptionPage() {
     setTagFilter("");
   };
 
-  const renderSubRow = (s: SubscriptionItem, sortable: boolean) => (
+  const renderSubRow = (
+    s: SubscriptionItem,
+    sortable: boolean,
+    showGroup = false,
+  ) => (
     <SubRowItem
       key={s.id}
       batchMode={batchMode}
@@ -1968,6 +2260,7 @@ export default function SubscriptionPage() {
         ) : undefined
       }
       selected={selectedIds.has(s.id)}
+      showGroup={showGroup}
       sortable={sortable}
       sourceText={sourceText(s)}
       sub={s}
@@ -2042,7 +2335,7 @@ export default function SubscriptionPage() {
       <PageToolbar
         placeholder={
           tab === "subs"
-            ? tr("搜索订阅名、节点组、标签或备注")
+            ? tr("搜索订阅名、分组、节点组、标签或备注")
             : tr("搜索节点组或关联订阅")
         }
         primary={
@@ -2145,6 +2438,10 @@ export default function SubscriptionPage() {
                 setBatchMode(false);
                 setSelectedIds(new Set());
               }}
+              onOpenGroupModal={() => {
+                setBatchGroupInput("");
+                setBatchGroupModal(true);
+              }}
               onOpenTagModal={() => {
                 setBatchTagInput([]);
                 setBatchTagModal(true);
@@ -2172,11 +2469,11 @@ export default function SubscriptionPage() {
                   collapsed={Boolean(collapsed[sec.key])}
                   items={sec.items}
                   pinned={sec.pinned}
-                  renderRow={(s) => renderSubRow(s, false)}
+                  renderRow={(s) => renderSubRow(s, false, Boolean(sec.pinned))}
                   title={sec.title}
                   onCreateInGroup={
-                    sec.groupId
-                      ? () => setDraft(draftForGroup(sec.groupId!, sources))
+                    sec.subGroup
+                      ? () => setDraft(draftForSubGroup(sec.subGroup!, sources))
                       : undefined
                   }
                   onToggleCollapse={() =>
@@ -2207,7 +2504,7 @@ export default function SubscriptionPage() {
                 strategy={verticalListSortingStrategy}
               >
                 <div className="divide-y divide-divider/70 overflow-hidden rounded-xl border border-divider bg-background">
-                  {shownSubs.map((s) => renderSubRow(s, canDragSubs))}
+                  {shownSubs.map((s) => renderSubRow(s, canDragSubs, true))}
                 </div>
               </SortableContext>
             </DndContext>
@@ -2233,6 +2530,7 @@ export default function SubscriptionPage() {
                     {detail.name}
                   </h2>
                   <p className="text-small font-normal text-default-500">
+                    {detail.group ? `${detail.group} · ` : ""}
                     {tr("{count} 个节点", { count: detail.nodeCount })}
                     {detail.expireTime
                       ? ` · ${expiryLabel(detail.expireTime)}`
@@ -2275,25 +2573,36 @@ export default function SubscriptionPage() {
                       <SubUsageBar s={detail} track="bg-default-200" />
                     )}
                     <p
-                      className={`text-xs ${detail.overQuota ? "text-danger" : "text-default-500"}`}
+                      className={`text-xs ${
+                        detail.overQuota
+                          ? "text-danger"
+                          : isIPSuspended(detail)
+                            ? "text-warning"
+                            : "text-default-500"
+                      }`}
                     >
                       {detail.overQuota
                         ? tr("流量已用完，已从服务器上断开")
-                        : [
-                            `↑ ${formatTraffic(detail.uploadBytes)} ↓ ${formatTraffic(detail.downloadBytes)}`,
-                            `${new Date(detail.trafficSince).toLocaleDateString(undefined, { month: "numeric", day: "numeric" })} 起`,
-                            detail.resetDay
-                              ? tr("每月 {day} 号重置", {
-                                  day: detail.resetDay,
-                                })
-                              : tr("不自动重置"),
-                          ].join(" · ")}
+                        : isIPSuspended(detail)
+                          ? tr(
+                              "在线 IP 超限，临时暂停中（可在「IP 与记录」立即恢复）",
+                            )
+                          : [
+                              `↑ ${formatTraffic(detail.uploadBytes)} ↓ ${formatTraffic(detail.downloadBytes)}`,
+                              `${new Date(detail.trafficSince).toLocaleDateString(undefined, { month: "numeric", day: "numeric" })} 起`,
+                              detail.resetDay
+                                ? tr("每月 {day} 号重置", {
+                                    day: detail.resetDay,
+                                  })
+                                : tr("不自动重置"),
+                            ].join(" · ")}
                     </p>
                   </div>
                   <Segmented
                     options={[
                       ["import", tr("导入")],
                       ["traffic", tr("流量统计")],
+                      ["ip", tr("IP 与记录")],
                     ]}
                     value={detailTab}
                     onChange={setDetailTab}
@@ -2302,6 +2611,11 @@ export default function SubscriptionPage() {
                     <SubTrafficStats
                       id={detail.id}
                       showSNI={detail.kind === "share"}
+                    />
+                  ) : detailTab === "ip" ? (
+                    <SubIPActivity
+                      sub={detail}
+                      onUnsuspended={() => void load()}
                     />
                   ) : (
                     <>
@@ -2433,6 +2747,7 @@ export default function SubscriptionPage() {
             draft && (
               <Editor
                 draft={draft}
+                groupSuggestions={subGroupSuggestions}
                 groups={groups}
                 ruleGroups={ruleGroups}
                 saving={saving}
@@ -2477,6 +2792,95 @@ export default function SubscriptionPage() {
               />
             )
           }
+        </ModalContent>
+      </Modal>
+
+      {/* Batch group modal */}
+      <Modal
+        classNames={{ base: modalBase }}
+        isOpen={batchGroupModal}
+        placement="center"
+        onOpenChange={setBatchGroupModal}
+      >
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader>
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-default-100 text-foreground">
+                    <Folder className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h2 className="text-base font-semibold">
+                      {tr("批量设置分组")}
+                    </h2>
+                    <p className="text-xs font-normal text-default-500">
+                      {tr("为选中的 {count} 个订阅设置分组", {
+                        count: selectedIds.size,
+                      })}
+                    </p>
+                  </div>
+                </div>
+              </ModalHeader>
+              <ModalBody className="space-y-2.5">
+                <Input
+                  label={tr("订阅分组")}
+                  maxLength={50}
+                  placeholder={tr("如：自用、拼车、家庭（留空归入未分组）")}
+                  value={batchGroupInput}
+                  variant="bordered"
+                  onChange={(e) => setBatchGroupInput(e.target.value)}
+                />
+                {subGroupSuggestions.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {subGroupSuggestions.map((g) => {
+                      const active = batchGroupInput.trim() === g;
+
+                      return (
+                        <button
+                          key={g}
+                          className={`inline-flex h-6 items-center gap-1 rounded-md border px-2 text-xs transition-colors ${
+                            active
+                              ? "border-foreground bg-foreground text-background dark:border-default-300 dark:bg-default-200 dark:text-foreground"
+                              : "border-divider bg-default-50 text-default-600 hover:bg-default-100"
+                          }`}
+                          type="button"
+                          onClick={() => setBatchGroupInput(active ? "" : g)}
+                        >
+                          <Folder className="h-3 w-3 opacity-70" />
+                          {g}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-xs text-default-400">
+                  {tr("留空则移出分组，归入「未分组」")}
+                </p>
+              </ModalBody>
+              <ModalFooter>
+                <Button size="sm" variant="light" onPress={onClose}>
+                  {tr("取消")}
+                </Button>
+                <Button
+                  color="primary"
+                  isLoading={batchBusy}
+                  size="sm"
+                  onPress={async () => {
+                    await runBatch(
+                      "set-group",
+                      undefined,
+                      undefined,
+                      batchGroupInput.trim(),
+                    );
+                    onClose();
+                  }}
+                >
+                  {tr("确定设置")}
+                </Button>
+              </ModalFooter>
+            </>
+          )}
         </ModalContent>
       </Modal>
 
