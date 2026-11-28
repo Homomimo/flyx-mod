@@ -8,6 +8,8 @@
 
 在一个面板里统一管理服务器、多内核节点、中转线路、订阅分发与轻量多用户。普通用户可在已授权的单入口隧道上选择监听 IP，并查看分配给自己的订阅用量。
 
+管理员可在订阅列表和详情查看分发订阅的实时上传与下载。
+
 [![Release](https://img.shields.io/github/v/release/Homomimo/flyx-mod?style=flat-square&color=111827)](https://github.com/Homomimo/flyx-mod/releases)
 [![License](https://img.shields.io/github/license/Homomimo/flyx-mod?style=flat-square&color=2563eb)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](go-backend/go.mod)

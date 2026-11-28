@@ -8,6 +8,8 @@
 
 Manage servers, multi-kernel proxy nodes, relay tunnels, subscription distribution, and lightweight multi-user quotas in one clean panel. Regular users can choose a listen IP on assigned single-entry tunnels and view their subscription usage.
 
+Administrators can see live upload and download rates in the subscription list and details.
+
 [![Release](https://img.shields.io/github/v/release/Homomimo/flyx-mod?style=flat-square&color=111827)](https://github.com/Homomimo/flyx-mod/releases)
 [![License](https://img.shields.io/github/license/Homomimo/flyx-mod?style=flat-square&color=2563eb)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](go-backend/go.mod)
