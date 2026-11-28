@@ -691,7 +691,7 @@ func (h *Handler) deleteNode(id int64, uninstall bool) (nodeDeleteResult, error)
 		if err != nil {
 			return result, err
 		}
-		if node != nil {
+		if node != nil && node.IsRemote != 1 {
 			result = h.uninstallNodeAgent(node)
 		}
 	}

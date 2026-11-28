@@ -134,6 +134,26 @@ func TestNodeBatchDeleteSummarizesUninstalls(t *testing.T) {
 	assertNodeGone(t, h.repo, 2)
 }
 
+func TestNodeDeleteRemoteDoesNotUninstallAgent(t *testing.T) {
+	h := newOfflineNodeHandler(t)
+	if err := h.repo.DB().Model(&model.Node{}).Where("id = ?", 1).Update("is_remote", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var got nodeDeleteResult
+	decodeNodeDelete(t, postJSONToHandler(t, h.nodeDelete, map[string]interface{}{"id": 1, "uninstall": true}), &got)
+	if got.Uninstall != "" || len(got.Warnings) != 0 {
+		t.Fatalf("unexpected uninstall outcome for remote server: %+v", got)
+	}
+	assertNodeGone(t, h.repo, 1)
+	if pending, err := h.repo.GetNodeUninstallBySecret("offline-secret-1"); err != nil || pending != nil {
+		t.Fatalf("unexpected pending uninstall for remote server: %+v %v", pending, err)
+	}
+	if node, err := h.repo.GetNodeByID(2); err != nil || node == nil {
+		t.Fatalf("local server missing after deleting remote server: %+v %v", node, err)
+	}
+}
+
 // The agent of a server deleted while offline reconnects with its old secret.
 func TestDeletedAgentIsUninstalledWhenItReconnects(t *testing.T) {
 	for _, tc := range []struct {
