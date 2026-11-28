@@ -184,17 +184,14 @@ export default function NodePage({
     "node-search-keyword-remote",
     "",
   );
-  const [activeTab, setActiveTab] = useLocalStorageState<NodeTab>(
+  const [savedTab, setActiveTab] = useLocalStorageState<NodeTab>(
     "node-active-tab",
     "local",
   );
-
-  // Backward-compat: older versions stored extra tab values.
-  useEffect(() => {
-    if (activeTab !== "local" && activeTab !== "remote") {
-      setActiveTab("local");
-    }
-  }, [activeTab, setActiveTab]);
+  const activeTab =
+    savedTab === "remote" && nodeList.some((node) => node.isRemote === 1)
+      ? "remote"
+      : "local";
   const [remoteUsageMap, setRemoteUsageMap] = useState<
     Record<number, RemoteUsageNode>
   >({});
