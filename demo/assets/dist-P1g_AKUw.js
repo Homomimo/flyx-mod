@@ -1,0 +1,1 @@
+import{Mi as e,Vi as t,Wi as n}from"./index-DdSI70UL.js";var r=e(`chevron-down`,[[`path`,{d:`m6 9 6 6 6-6`,key:`qrunsl`}]]),i=n(t(),1);function a(e){let t=i.useRef({value:e,previous:e});return i.useMemo(()=>(t.current.value!==e&&(t.current.previous=t.current.value,t.current.value=e),t.current.previous),[e])}export{r as n,a as t};
