@@ -79,7 +79,10 @@ const PROBES: Record<string, [list: string, field: string]> = {
   "node/latency/probe": ["node/list", "latency"],
   "inbound/relay/probe": ["inbound/relay/list", "latency"],
 };
-const ALIASES: Record<string, string> = { "node/route/probe": "node/route" };
+const ALIASES: Record<string, string> = {
+  "node/route/probe": "node/route",
+  "user/subscription/traffic": "subscription/traffic",
+};
 
 const canon = (body: unknown) => {
   if (body === undefined || body === null || body === "") return "";

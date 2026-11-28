@@ -499,11 +499,10 @@ export const getUserSubscriptionTraffic = (
   id: number,
   range: SubTrafficRange,
 ) =>
-  Network.post<SubTraffic>("/user/subscription/traffic", {
-    id,
-    range,
-    tzOffsetMinutes: new Date().getTimezoneOffset(),
-  });
+  Network.post<SubTraffic>(
+    "/user/subscription/traffic",
+    trafficQuery(id, range),
+  );
 
 // 网站配置相关接口
 export const getConfigs = () =>
