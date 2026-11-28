@@ -11,7 +11,7 @@ type Rate = {
   valid: number;
   expected: number;
 };
-// Older panels ignore ?v=2 and return bare pairs. Don't invent coverage.
+// Older panels ignore ?v=2 and return bare pairs.
 type WireRate = Rate | Pair;
 type Rates = Record<number, WireRate>;
 
@@ -123,20 +123,8 @@ function speed(pair?: Pair | null) {
 
   return `↑ ${fmt(pair.up)}/s　↓ ${fmt(pair.down)}/s`;
 }
-function coverage(valid: number, expected: number) {
-  if (!expected) return "无可计量节点";
-
-  return `${valid}/${expected} · ${valid === expected ? "完整" : valid ? "部分" : "暂无样本"}`;
-}
-export function RateLabel({
-  rate,
-  showCoverage = true,
-}: {
-  rate?: WireRate;
-  showCoverage?: boolean;
-}) {
-  const measured = rate && "instant" in rate ? rate : undefined;
-  const instant = rate && "up" in rate ? rate : measured?.instant;
+export function RateLabel({ rate }: { rate?: WireRate }) {
+  const instant = rate && "instant" in rate ? rate.instant : rate;
 
   return (
     <span
@@ -144,9 +132,6 @@ export function RateLabel({
       title="↑ 上传、↓ 下载；仅汇总当前分发订阅有有效样本的直连节点。0 B/s 表示已测得空闲，— 表示无有效样本。"
     >
       实时速率 · {speed(instant)}
-      {showCoverage &&
-        measured &&
-        `　${coverage(measured.valid, measured.expected)}`}
     </span>
   );
 }

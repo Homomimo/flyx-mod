@@ -2566,7 +2566,6 @@ export default function SubscriptionPage() {
                     {detail.kind === "share" && (
                       <RateLabel
                         rate={detail.active ? rates[detail.id] : undefined}
-                        showCoverage={false}
                       />
                     )}
                     {detail.trafficLimit > 0 && (
