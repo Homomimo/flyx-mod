@@ -6,7 +6,7 @@
 
 **现代化的流量转发 + 多内核代理节点管理面板**
 
-在一个面板里统一管理服务器、多内核节点、中转线路、订阅分发与轻量多用户。
+在一个面板里统一管理服务器、多内核节点、中转线路、订阅分发与轻量多用户。普通用户可在已授权的单入口隧道上选择监听 IP，并查看分配给自己的订阅用量。
 
 [![Release](https://img.shields.io/github/v/release/Homomimo/flyx-mod?style=flat-square&color=111827)](https://github.com/Homomimo/flyx-mod/releases)
 [![License](https://img.shields.io/github/license/Homomimo/flyx-mod?style=flat-square&color=2563eb)](LICENSE)

@@ -44,7 +44,7 @@ jobs:
           npm install -g pnpm@10.28.1
           pnpm install --frozen-lockfile
           VITE_DEMO=true VITE_BASE=/flyx/demo/ \
-          VITE_APP_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo dev)" \
+          VITE_APP_VERSION="$(sed -n 's/^VITE_APP_VERSION=//p' .env.production | tr -d '\r')" \
           VITE_GITHUB_REPO="https://github.com/${{ github.repository }}" \
             pnpm exec vite build --outDir ../doc/.vitepress/dist/demo --emptyOutDir
 
