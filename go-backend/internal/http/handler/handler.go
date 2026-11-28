@@ -791,6 +791,22 @@ func (h *Handler) userTunnelVisibleList(w http.ResponseWriter, r *http.Request) 
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+	if roleID != 0 {
+		tunnelIDs := make([]int64, 0, len(items))
+		for _, item := range items {
+			tunnelIDs = append(tunnelIDs, item["id"].(int64))
+		}
+		options, err := h.repo.TunnelListenOptions(tunnelIDs)
+		if err != nil {
+			response.WriteJSON(w, response.Err(-2, err.Error()))
+			return
+		}
+		for i, item := range items {
+			option := options[tunnelIDs[i]]
+			item["inIps"] = option.IPs
+			item["inNodeNum"] = option.EntryCount
+		}
+	}
 	response.WriteJSON(w, response.OK(items))
 }
 
