@@ -2468,7 +2468,6 @@ export default function NodePage({
       <BatchDeleteNodesModal
         batchDeleteModalOpen={batchDeleteModalOpen}
         batchLoading={batchLoading}
-        canUninstall={activeTab === "local"}
         handleBatchDelete={handleBatchDelete}
         selectedIds={selectedIds}
         setBatchDeleteModalOpen={setBatchDeleteModalOpen}

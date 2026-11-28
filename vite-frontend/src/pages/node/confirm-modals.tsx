@@ -117,7 +117,6 @@ export function DeleteNodeModal({
   setDeleteModalOpen,
 }: DeleteNodeModalProps) {
   const [uninstall, setUninstall] = useUninstallChoice(deleteModalOpen);
-  const canUninstall = nodeToDelete != null && nodeToDelete.isRemote !== 1;
 
   return (
     <Modal
@@ -144,12 +143,10 @@ export function DeleteNodeModal({
               <p className="text-small text-default-500">
                 此操作不可恢复，请谨慎操作。
               </p>
-              {canUninstall && (
-                <UninstallAgentOption
-                  isSelected={uninstall}
-                  onValueChange={setUninstall}
-                />
-              )}
+              <UninstallAgentOption
+                isSelected={uninstall}
+                onValueChange={setUninstall}
+              />
             </ModalBody>
             <ModalFooter>
               <Button variant="light" onPress={onClose}>
@@ -158,7 +155,7 @@ export function DeleteNodeModal({
               <Button
                 color="danger"
                 isLoading={deleteLoading}
-                onPress={() => void confirmDelete(canUninstall && uninstall)}
+                onPress={() => void confirmDelete(uninstall)}
               >
                 {deleteLoading ? "删除中..." : "删除"}
               </Button>
@@ -173,7 +170,6 @@ export function DeleteNodeModal({
 export interface BatchDeleteNodesModalProps {
   batchDeleteModalOpen: boolean;
   batchLoading: boolean;
-  canUninstall: boolean;
   handleBatchDelete: (uninstall: boolean) => Promise<void>;
   selectedIds: Set<number>;
   setBatchDeleteModalOpen: Dispatch<SetStateAction<boolean>>;
@@ -183,7 +179,6 @@ export interface BatchDeleteNodesModalProps {
 export function BatchDeleteNodesModal({
   batchDeleteModalOpen,
   batchLoading,
-  canUninstall,
   handleBatchDelete,
   selectedIds,
   setBatchDeleteModalOpen,
@@ -215,12 +210,10 @@ export function BatchDeleteNodesModal({
               <p className="text-small text-default-500">
                 此操作不可恢复，请谨慎操作。
               </p>
-              {canUninstall && (
-                <UninstallAgentOption
-                  isSelected={uninstall}
-                  onValueChange={setUninstall}
-                />
-              )}
+              <UninstallAgentOption
+                isSelected={uninstall}
+                onValueChange={setUninstall}
+              />
             </ModalBody>
             <ModalFooter>
               <Button variant="light" onPress={onClose}>
@@ -229,9 +222,7 @@ export function BatchDeleteNodesModal({
               <Button
                 color="danger"
                 isLoading={batchLoading}
-                onPress={() =>
-                  void handleBatchDelete(canUninstall && uninstall)
-                }
+                onPress={() => void handleBatchDelete(uninstall)}
               >
                 {batchLoading ? "删除中..." : "删除"}
               </Button>
