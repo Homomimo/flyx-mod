@@ -6,18 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"go-backend/internal/store/repo"
+	"go-backend/internal/auth"
 )
 
 // Issue #208: normal users get the listen IP choices of their tunnels from
 // the user tunnel list, built like the admin form builds them.
 func TestTunnelListenOptions(t *testing.T) {
-	r, err := repo.Open(t.TempDir() + "/listen-ip.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = r.Close() })
-	h := New(r, "unit-test-secret")
+	router, h, r, secret := setupUsersTestRouter(t)
 	db := r.DB()
 	now := time.Now().UnixMilli()
 
@@ -76,5 +71,47 @@ func TestTunnelListenOptions(t *testing.T) {
 	}
 	if err := h.validateUserListenIP(withNodes, "192.0.2.9", []forwardPortRecord{{InIP: "192.0.2.9"}}); err != nil {
 		t.Fatalf("the forward's current listen IP must stay accepted: %v", err)
+	}
+
+	adminToken, err := auth.GenerateToken(1, "admin_user", 0, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createRes := postJSON(t, router, adminToken, "/api/v1/user/create", map[string]interface{}{
+		"user":      "alice",
+		"pwd":       "secret123",
+		"status":    1,
+		"tunnelIds": []int64{withNodes, multi},
+	})
+	if createRes.Code != 0 {
+		t.Fatalf("create regular user: %+v", createRes)
+	}
+	loginRes := postJSON(t, router, "", "/api/v1/user/login", map[string]string{
+		"username": "alice",
+		"password": "secret123",
+	})
+	if loginRes.Code != 0 {
+		t.Fatalf("log in as regular user: %+v", loginRes)
+	}
+	userToken := loginRes.Data.(map[string]interface{})["token"].(string)
+	listRes := postJSON(t, router, userToken, "/api/v1/tunnel/user/tunnel", nil)
+	if listRes.Code != 0 {
+		t.Fatalf("list authorized tunnels: %+v", listRes)
+	}
+	items := listRes.Data.([]interface{})
+	expectedIDs := []int64{withNodes, multi}
+	if len(items) != len(expectedIDs) {
+		t.Fatalf("expected only the two authorized tunnels, got %+v", items)
+	}
+	for i, id := range expectedIDs {
+		item := items[i].(map[string]interface{})
+		option := opts[id]
+		expectedIPs := make([]interface{}, 0, len(option.IPs))
+		for _, ip := range option.IPs {
+			expectedIPs = append(expectedIPs, ip)
+		}
+		if item["id"] != float64(id) || item["inNodeNum"] != float64(option.EntryCount) || !reflect.DeepEqual(item["inIps"], expectedIPs) {
+			t.Fatalf("expected tunnel %d with listen options %+v, got %+v", id, option, item)
+		}
 	}
 }

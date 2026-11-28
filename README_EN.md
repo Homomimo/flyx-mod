@@ -6,7 +6,7 @@
 
 **Modern Traffic Forwarding & Multi-Kernel Proxy Node Panel**
 
-Manage servers, multi-kernel proxy nodes, relay tunnels, subscription distribution, and lightweight multi-user quotas in one clean panel.
+Manage servers, multi-kernel proxy nodes, relay tunnels, subscription distribution, and lightweight multi-user quotas in one clean panel. Regular users can choose a listen IP on assigned single-entry tunnels and view their subscription usage.
 
 [![Release](https://img.shields.io/github/v/release/Homomimo/flyx-mod?style=flat-square&color=111827)](https://github.com/Homomimo/flyx-mod/releases)
 [![License](https://img.shields.io/github/license/Homomimo/flyx-mod?style=flat-square&color=2563eb)](LICENSE)

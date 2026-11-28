@@ -97,6 +97,7 @@ export function SubTrafficStats({
   scope?: "admin" | "user";
   showSNI?: boolean;
 }) {
+  const canShowSNI = scope === "admin" && showSNI;
   const [range, setRange] = useState<SubTrafficRange>("hour");
   const [data, setData] = useState<{ id: number; traffic: SubTraffic } | null>(
     null,
@@ -230,7 +231,7 @@ export function SubTrafficStats({
                 onClick={(e: {
                   activeTooltipIndex?: string | number | null;
                 }) => {
-                  if (!showSNI) return;
+                  if (!canShowSNI) return;
                   const p =
                     e.activeTooltipIndex != null
                       ? points[Number(e.activeTooltipIndex)]
@@ -334,7 +335,7 @@ export function SubTrafficStats({
             )}
           </div>
 
-          {showSNI && selected && (
+          {canShowSNI && selected && (
             <section className="space-y-2 rounded-xl border border-divider p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">访问 SNI</h4>
